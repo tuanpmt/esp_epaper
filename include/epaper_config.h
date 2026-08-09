@@ -20,9 +20,11 @@
 typedef enum {
     // Specific panels (with custom LUT or special features)
     EPD_PANEL_GDEY0154D67 = 0,  // 1.54" BW 200x200 (custom LUT for better partial)
-    EPD_PANEL_GDEP073E01,       // 7.3" 6-Color 800x480
-    EPD_PANEL_GDEY037F51,       // 3.7" 4-Color BWRY 240x416
-    EPD_PANEL_GDEY029T71H,      // 2.9" BW 168x384 (SSD1685, sources S8..S175)
+    EPD_PANEL_GDEP073E01, // 7.3" 6-Color 800x480
+    EPD_PANEL_GDEY037F51, // 3.7" 4-Color BWRY 240x416
+    EPD_PANEL_GDEY029T71H, // 2.9" BW 168x384 (SSD1685, sources S8..S175)
+    // SSD1677 panels (data-entry Y-decrement, pixel X range, dual RAM planes)
+    EPD_PANEL_GDEQ0426T82, // 4.26" BW 800x480 (Xteink X4, SSD1677)
 
     // Generic SSD16xx BW panels (same driver, different sizes)
     EPD_PANEL_SSD16XX_154,      // 1.54" BW 200x200 (generic, no custom LUT)
@@ -31,9 +33,10 @@ typedef enum {
     EPD_PANEL_SSD16XX_270,      // 2.7" BW 176x264 (GDEY027T91, etc.)
     EPD_PANEL_SSD16XX_290,      // 2.9" BW 128x296 (GDEY029T94, etc.)
     EPD_PANEL_SSD16XX_370,      // 3.7" BW 280x480 (GDEY037T03, etc.)
-    EPD_PANEL_SSD16XX_420,      // 4.2" BW 400x300 (GDEY042T81, etc.)
+    EPD_PANEL_SSD16XX_420, // 4.2" BW 400x300 (GDEY042T81, etc.)
 
-    EPD_PANEL_COUNT,            // Must be BEFORE aliases!
+
+    EPD_PANEL_COUNT, // Must be BEFORE aliases!
 
     // Legacy aliases (for backward compatibility, don't affect count)
     EPD_PANEL_GDEY0266T90 = EPD_PANEL_SSD16XX_266,
@@ -112,6 +115,11 @@ typedef struct {
     epd_pin_config_t pins;
     epd_spi_config_t spi;
     epd_panel_config_t panel;
+    // Allocate the internal full-frame buffer. When false, epd_update() streams
+    // straight from the caller's buffer and epd_fill()/epd_set_base_image()/
+    // epd_lvgl_flush() are unsupported. Use for large panels on RAM-constrained
+    // chips (e.g. an 800x480 BW panel on ESP32-C3): saves buffer_size bytes.
+    bool framebuffer_enable;
 } epd_config_t;
 
 // Default configuration macro (ESP32-WROOM-32D)
@@ -136,6 +144,7 @@ typedef struct {
         .mirror_y = false, \
         .rotation = 0, \
     }, \
+    .framebuffer_enable = true, \
 }
 
 // ESP32-S3-ePaper-1.54 board configuration
@@ -161,6 +170,7 @@ typedef struct {
         .mirror_y = false, \
         .rotation = 0, \
     }, \
+    .framebuffer_enable = true, \
 }
 
 // 7.3" 6-Color E-Paper configuration (800x480)
@@ -186,6 +196,7 @@ typedef struct {
         .mirror_y = false, \
         .rotation = 0, \
     }, \
+    .framebuffer_enable = true, \
 }
 
 // Good Display ESP32-WROOM-32D development board
@@ -212,6 +223,7 @@ typedef struct {
         .mirror_y = false, \
         .rotation = 0, \
     }, \
+    .framebuffer_enable = true, \
 }
 
 // Good Display ESP32-WROOM-32D + 3.7" 4-Color BWRY (GDEY037F51)
@@ -238,6 +250,7 @@ typedef struct {
         .mirror_y = false, \
         .rotation = 0, \
     }, \
+    .framebuffer_enable = true, \
 }
 
 #endif // _EPAPER_CONFIG_H_

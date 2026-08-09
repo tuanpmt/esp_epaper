@@ -51,6 +51,13 @@ extern esp_err_t bwry4c_write_ram(epd_device_t *dev, const uint8_t *data, uint32
 extern esp_err_t bwry4c_sleep(epd_device_t *dev);
 extern esp_err_t bwry4c_wake(epd_device_t *dev);
 
+// SSD1677 BW controller
+extern esp_err_t ssd1677_init(epd_device_t *dev);
+extern esp_err_t ssd1677_update(epd_device_t *dev, epd_update_mode_t mode);
+extern esp_err_t ssd1677_write_ram(epd_device_t *dev, const uint8_t *data, uint32_t len);
+extern esp_err_t ssd1677_sleep(epd_device_t *dev);
+extern esp_err_t ssd1677_wake(epd_device_t *dev);
+
 /*=============================================================================
  * Controller Operations Table
  *============================================================================*/
@@ -87,6 +94,14 @@ static const epd_controller_ops_t controller_ops[EPD_CTRL_COUNT] = {
         .write_ram_partial = NULL,  // Not supported
         .sleep = bwry4c_sleep,
         .wake = bwry4c_wake,
+    },
+    [EPD_CTRL_SSD1677] = {
+        .init = ssd1677_init,
+        .update = ssd1677_update,
+        .write_ram = ssd1677_write_ram,
+        .write_ram_partial = NULL,  // Not supported (module is full-frame only)
+        .sleep = ssd1677_sleep,
+        .wake = ssd1677_wake,
     },
 };
 
@@ -190,6 +205,17 @@ static const epd_panel_desc_t panel_registry[EPD_PANEL_COUNT] = {
         .color_mode = EPD_COLOR_BW, .bits_per_pixel = 1,
         .caps = EPD_CAP_PARTIAL | EPD_CAP_FAST,
         .ctrl = EPD_CTRL_SSD16XX,
+        .init_data = NULL,
+    },
+
+    // SSD1677 BW panels (pixel X range, Y-decrement data entry, dual RAM planes)
+    [EPD_PANEL_GDEQ0426T82] = {
+        .name = "GDEQ0426T82",
+        .width = 800, .height = 480,
+        .color_mode = EPD_COLOR_BW, .bits_per_pixel = 1,
+        .caps = EPD_CAP_PARTIAL | EPD_CAP_FAST,
+        .ctrl = EPD_CTRL_SSD1677,
+        .full_refresh_interval = 10,
         .init_data = NULL,
     },
 };

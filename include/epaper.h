@@ -23,6 +23,13 @@ typedef struct {
 
 /**
  * @brief Initialize e-paper display
+ *
+ * When config.framebuffer_enable is false, the internal full-frame buffer is
+ * not allocated and epd_update() streams the caller's buffer straight to the
+ * panel. epd_fill(), epd_set_base_image(), epd_lvgl_flush() and
+ * epd_flush_framebuffer() then return ESP_ERR_NOT_SUPPORTED, and
+ * epd_get_framebuffer() returns NULL.
+ *
  * @param config Device configuration
  * @param handle Output handle
  * @return ESP_OK on success
@@ -55,6 +62,21 @@ esp_err_t epd_fill(epd_handle_t handle, uint8_t color);
  * @param mode Update mode (full/fast/partial)
  */
 esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode_t mode);
+
+/**
+ * @brief Stream buffer to the panel and trigger a refresh without waiting
+ *
+ * Same flow as epd_update(), but returns as soon as the master activation has
+ * been issued. The panel keeps driving (BUSY high) for the refresh duration,
+ * so the caller must epd_wait_busy() before the next command sequence, or rely
+ * on the controller's wait-before-use guards (e.g. ssd1677_write_ram()) to
+ * synchronize at the next access. The caller's buffer is only read during the
+ * synchronous SPI transfer, so it is free to reuse once this returns.
+ *
+ * @param buffer Pixel data (1 bit per pixel, MSB first)
+ * @param mode Update mode (full/fast/partial)
+ */
+esp_err_t epd_update_async(epd_handle_t handle, const uint8_t *buffer, epd_update_mode_t mode);
 
 /**
  * @brief Partial update
@@ -113,7 +135,8 @@ esp_err_t epd_lvgl_flush(epd_handle_t handle, const void *area, const uint8_t *p
 
 /**
  * @brief Get framebuffer for direct LVGL rendering
- * @return Pointer to internal framebuffer
+ * @return Pointer to internal framebuffer, or NULL when the internal
+ *         framebuffer is disabled or the handle is invalid
  */
 uint8_t* epd_get_framebuffer(epd_handle_t handle);
 

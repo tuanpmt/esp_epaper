@@ -24,6 +24,10 @@ struct epd_device {
     bool initialized;
     bool partial_ready;
     uint32_t partial_count;
+    // While set, the controller's WAIT() macro skips the busy poll. epd_update_async()
+    // sets it around the trigger so the refresh can drive in the background; all other
+    // command sequences leave it clear and still synchronize (see ssd1677.c wait-before-use).
+    bool defer_busy_wait;
 };
 
 /*=============================================================================
@@ -53,6 +57,11 @@ const epd_panel_desc_t* epd_get_panel(epd_device_t *dev)
 bool epd_is_partial_ready(epd_device_t *dev)
 {
     return dev ? dev->partial_ready : false;
+}
+
+bool epd_is_wait_deferred(epd_device_t *dev)
+{
+    return dev ? dev->defer_busy_wait : false;
 }
 
 /*=============================================================================
@@ -97,21 +106,25 @@ esp_err_t epd_init(const epd_config_t *config, epd_handle_t *handle)
     // Calculate buffer size using panel's bits_per_pixel
     dev->buffer_size = epd_calc_buffer_size(dev->width, dev->height, panel->bits_per_pixel);
 
-    // Allocate framebuffer (prefer PSRAM for large buffers)
-    if (dev->buffer_size > 32768) {
-        dev->framebuffer = heap_caps_malloc(dev->buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    } else {
-        dev->framebuffer = heap_caps_malloc(dev->buffer_size, MALLOC_CAP_DMA);
-    }
+    // Allocate the internal framebuffer unless the caller streams straight to
+    // the panel (config.framebuffer_enable == false). Prefer PSRAM for large
+    // buffers; fall back to internal DMA RAM on chips without PSRAM.
+    if (dev->config.framebuffer_enable) {
+        if (dev->buffer_size > 32768) {
+            dev->framebuffer = heap_caps_malloc(dev->buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
+        if (!dev->framebuffer) {
+            dev->framebuffer = heap_caps_malloc(dev->buffer_size, MALLOC_CAP_DMA);
+        }
+        if (!dev->framebuffer) {
+            ESP_LOGE(TAG, "Failed to allocate framebuffer (%lu bytes)", dev->buffer_size);
+            free(dev);
+            return ESP_ERR_NO_MEM;
+        }
 
-    if (!dev->framebuffer) {
-        ESP_LOGE(TAG, "Failed to allocate framebuffer (%lu bytes)", dev->buffer_size);
-        free(dev);
-        return ESP_ERR_NO_MEM;
+        ESP_LOGI(TAG, "Framebuffer allocated: %lu bytes", dev->buffer_size);
+        memset(dev->framebuffer, 0xFF, dev->buffer_size);  // White
     }
-
-    ESP_LOGI(TAG, "Framebuffer allocated: %lu bytes", dev->buffer_size);
-    memset(dev->framebuffer, 0xFF, dev->buffer_size);  // White
 
     // Initialize SPI
     esp_err_t ret = epd_spi_init(&dev->spi, &config->pins, &config->spi);
@@ -202,12 +215,17 @@ esp_err_t epd_fill(epd_handle_t handle, uint8_t color)
     if (!handle) return ESP_ERR_INVALID_ARG;
 
     epd_device_t *dev = handle;
+    if (!dev->framebuffer) {
+        return ESP_ERR_NOT_SUPPORTED;  // Requires the internal framebuffer
+    }
+
     memset(dev->framebuffer, color, dev->buffer_size);
 
     return epd_update(handle, dev->framebuffer, EPD_UPDATE_FULL);
 }
 
-esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode_t mode)
+static esp_err_t epd_update_internal(epd_handle_t handle, const uint8_t *buffer,
+                                    epd_update_mode_t mode, bool defer_wait)
 {
     if (!handle || !buffer) return ESP_ERR_INVALID_ARG;
 
@@ -238,11 +256,18 @@ esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode
         }
     }
 
-    // Copy to framebuffer
-    memcpy(dev->framebuffer, buffer, dev->buffer_size);
+    // Mirror the caller's buffer into the internal framebuffer so the panel
+    // keeps a canonical copy for future partial refreshes. With the internal
+    // framebuffer disabled, epd_update() streams buffer straight to the panel.
+    if (dev->framebuffer) {
+        memcpy(dev->framebuffer, buffer, dev->buffer_size);
+    }
 
-    // For partial mode on first call, do a full refresh to set base image
-    if (mode == EPD_UPDATE_PARTIAL && !dev->partial_ready) {
+    // For partial/fast mode on first call, do a full refresh to set base image.
+    // Fast mode is included because some controllers (SSD1677) run a
+    // differential refresh for fast updates too: 0x26 must hold the frame that
+    // is actually on screen, or the diff comes out empty.
+    if ((mode == EPD_UPDATE_PARTIAL || mode == EPD_UPDATE_FAST) && !dev->partial_ready) {
         if (!dev->initialized) {
             ret = dev->ops->init(dev);
             if (ret != ESP_OK) return ret;
@@ -252,7 +277,12 @@ esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode
         ret = dev->ops->write_ram(dev, buffer, dev->buffer_size);
         if (ret != ESP_OK) return ret;
 
+        // defer_wait lets the first (base-image) refresh also drive in the
+        // background; write_ram already wrote 0x26 synchronously, so
+        // partial_ready is valid before the panel finishes refreshing.
+        dev->defer_busy_wait = defer_wait;
         ret = dev->ops->update(dev, EPD_UPDATE_FULL);
+        dev->defer_busy_wait = false;
         if (ret != ESP_OK) return ret;
 
         dev->partial_ready = true;
@@ -271,11 +301,25 @@ esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode
         }
     }
 
-    // Write RAM and update
+    // Write RAM and update. write_ram's own wait-before-use always runs; only
+    // the post-trigger busy wait is deferred for the async path.
     ret = dev->ops->write_ram(dev, buffer, dev->buffer_size);
     if (ret != ESP_OK) return ret;
 
-    return dev->ops->update(dev, mode);
+    dev->defer_busy_wait = defer_wait;
+    ret = dev->ops->update(dev, mode);
+    dev->defer_busy_wait = false;
+    return ret;
+}
+
+esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode_t mode)
+{
+    return epd_update_internal(handle, buffer, mode, false);
+}
+
+esp_err_t epd_update_async(epd_handle_t handle, const uint8_t *buffer, epd_update_mode_t mode)
+{
+    return epd_update_internal(handle, buffer, mode, true);
 }
 
 esp_err_t epd_update_partial(epd_handle_t handle, uint16_t x, uint16_t y,
@@ -304,6 +348,10 @@ esp_err_t epd_set_base_image(epd_handle_t handle, const uint8_t *buffer)
     if (!handle || !buffer) return ESP_ERR_INVALID_ARG;
 
     epd_device_t *dev = handle;
+    if (!dev->framebuffer) {
+        return ESP_ERR_NOT_SUPPORTED;  // Requires the internal framebuffer
+    }
+
     memcpy(dev->framebuffer, buffer, dev->buffer_size);
     return ESP_OK;
 }
@@ -356,7 +404,6 @@ uint8_t* epd_get_framebuffer(epd_handle_t handle)
     if (!handle) return NULL;
     return handle->framebuffer;
 }
-
 esp_err_t epd_flush_framebuffer(epd_handle_t handle, epd_update_mode_t mode)
 {
     if (!handle) return ESP_ERR_INVALID_ARG;
@@ -368,6 +415,10 @@ esp_err_t epd_lvgl_flush(epd_handle_t handle, const void *area, const uint8_t *p
     if (!handle || !px_map) return ESP_ERR_INVALID_ARG;
 
     epd_device_t *dev = handle;
+    if (!dev->framebuffer) {
+        return ESP_ERR_NOT_SUPPORTED;  // Requires the internal framebuffer
+    }
+
     memcpy(dev->framebuffer, px_map, dev->buffer_size);
     return ESP_OK;
 }

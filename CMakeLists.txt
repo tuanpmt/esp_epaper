@@ -6,6 +6,7 @@ idf_component_register(
         "src/epaper_common.c"
         "src/epaper_registry.c"
         "src/controllers/ssd16xx.c"
+        "src/controllers/ssd1677.c"
         "src/controllers/gdey0154_lut.c"
         "src/controllers/acep_6color.c"
         "src/controllers/bwry_4color.c"

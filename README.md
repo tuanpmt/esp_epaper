@@ -68,6 +68,7 @@ Smart partial refresh for BW panels:
 | GDEY0154D67 | 1.54" | 200x200 | BW | Yes (custom LUT) |
 | GDEP073E01 | 7.3" | 800x480 | 6-Color | No |
 | GDEY037F51 | 3.7" | 240x416 | 4-Color BWRY | No |
+| GDEQ0426T82 | 4.26" | 800x480 | BW | Yes (SSD1677) |
 
 ### Generic SSD16xx Panels
 
@@ -81,7 +82,7 @@ Adding new BW panels requires only **1 line of code** - see [ADDING_PANELS.md](A
 | SSD16XX_270 | 2.7" | 176x264 | GDEY027T91, GDEM027Q72 |
 | SSD16XX_290 | 2.9" | 128x296 | GDEY029T94, GDEY029T71H |
 | SSD16XX_370 | 3.7" | 280x480 | GDEY037T03 |
-| SSD16XX_420 | 4.2" | 400x300 | GDEY042T81, GDEQ0426T82 |
+| SSD16XX_420 | 4.2" | 400x300 | GDEY042T81 |
 
 ## Installation
 
