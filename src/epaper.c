@@ -343,6 +343,69 @@ esp_err_t epd_update_partial(epd_handle_t handle, uint16_t x, uint16_t y,
     return dev->ops->update(dev, EPD_UPDATE_PARTIAL);
 }
 
+bool epd_supports_partial(epd_handle_t handle)
+{
+    if (!handle) return false;
+
+    epd_device_t *dev = handle;
+    return epd_panel_has_cap(dev->panel, EPD_CAP_PARTIAL) &&
+           dev->ops->write_ram_partial != NULL;
+}
+
+bool epd_supports_base_partial(epd_handle_t handle)
+{
+    if (!handle) return false;
+
+    return handle->ops->write_ram_partial_base != NULL;
+}
+
+esp_err_t epd_write_partial(epd_handle_t handle, uint16_t x, uint16_t y,
+                            uint16_t w, uint16_t h, const uint8_t *buffer)
+{
+    if (!handle || !buffer) return ESP_ERR_INVALID_ARG;
+
+    epd_device_t *dev = handle;
+    if (!dev->ops->write_ram_partial) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    return dev->ops->write_ram_partial(dev, x, y, w, h, buffer);
+}
+
+esp_err_t epd_write_base_partial(epd_handle_t handle, uint16_t x, uint16_t y,
+                                 uint16_t w, uint16_t h, const uint8_t *buffer)
+{
+    if (!handle || !buffer) return ESP_ERR_INVALID_ARG;
+
+    epd_device_t *dev = handle;
+    if (!dev->ops->write_ram_partial_base) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    return dev->ops->write_ram_partial_base(dev, x, y, w, h, buffer);
+}
+
+esp_err_t epd_update_partial_async(epd_handle_t handle, epd_update_mode_t mode)
+{
+    if (!handle) return ESP_ERR_INVALID_ARG;
+
+    epd_device_t *dev = handle;
+
+    if (mode == EPD_UPDATE_PARTIAL && !epd_supports_partial(handle)) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (mode == EPD_UPDATE_FAST && !epd_panel_has_cap(dev->panel, EPD_CAP_FAST)) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    // Defer the post-trigger busy wait so the refresh drives in the background;
+    // the next access synchronizes via the controller's wait-before-use guards.
+    dev->defer_busy_wait = true;
+    esp_err_t ret = dev->ops->update(dev, mode);
+    dev->defer_busy_wait = false;
+    return ret;
+}
+
 esp_err_t epd_set_base_image(epd_handle_t handle, const uint8_t *buffer)
 {
     if (!handle || !buffer) return ESP_ERR_INVALID_ARG;

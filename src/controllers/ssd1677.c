@@ -211,6 +211,46 @@ esp_err_t ssd1677_write_ram(epd_device_t *dev, const uint8_t *data, uint32_t len
     return ESP_OK;
 }
 
+// Windowed variant of ssd1677_write_ram(): streams one byte-aligned rectangle
+// into the display RAM (0x24) only. The caller is responsible for keeping the
+// base image RAM (0x26) in sync via ssd1677_write_ram_partial_base() once the
+// previous refresh has finished driving, so that a following differential 0xFC
+// refresh diffs against what is actually on screen.
+esp_err_t ssd1677_write_ram_partial(epd_device_t *dev, uint16_t x, uint16_t y,
+                                     uint16_t w, uint16_t h, const uint8_t *data)
+{
+    epd_spi_t *spi = epd_get_spi(dev);
+
+    // GDDRAM is read-only while the panel is refreshing; writes issued during
+    // BUSY are ignored.
+    WAIT(dev);
+
+    ssd1677_set_ram_area(dev, x, y, w, h);
+
+    CMD(spi, 0x24);
+    epd_spi_write_data_bulk(spi, data, (w / 8) * h);
+
+    return ESP_OK;
+}
+
+// Windowed base image (0x26) write. Used to commit the last partial window to
+// the base plane after the panel finished driving, keeping 0x26 equal to the
+// frame on screen so subsequent differential refreshes stay correct.
+esp_err_t ssd1677_write_ram_partial_base(epd_device_t *dev, uint16_t x, uint16_t y,
+                                          uint16_t w, uint16_t h, const uint8_t *data)
+{
+    epd_spi_t *spi = epd_get_spi(dev);
+
+    WAIT(dev);
+
+    ssd1677_set_ram_area(dev, x, y, w, h);
+
+    CMD(spi, 0x26);
+    epd_spi_write_data_bulk(spi, data, (w / 8) * h);
+
+    return ESP_OK;
+}
+
 /*=============================================================================
  * Power Management
  *============================================================================*/

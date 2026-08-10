@@ -55,6 +55,10 @@ extern esp_err_t bwry4c_wake(epd_device_t *dev);
 extern esp_err_t ssd1677_init(epd_device_t *dev);
 extern esp_err_t ssd1677_update(epd_device_t *dev, epd_update_mode_t mode);
 extern esp_err_t ssd1677_write_ram(epd_device_t *dev, const uint8_t *data, uint32_t len);
+extern esp_err_t ssd1677_write_ram_partial(epd_device_t *dev, uint16_t x, uint16_t y,
+                                            uint16_t w, uint16_t h, const uint8_t *data);
+extern esp_err_t ssd1677_write_ram_partial_base(epd_device_t *dev, uint16_t x, uint16_t y,
+                                                 uint16_t w, uint16_t h, const uint8_t *data);
 extern esp_err_t ssd1677_sleep(epd_device_t *dev);
 extern esp_err_t ssd1677_wake(epd_device_t *dev);
 
@@ -99,7 +103,8 @@ static const epd_controller_ops_t controller_ops[EPD_CTRL_COUNT] = {
         .init = ssd1677_init,
         .update = ssd1677_update,
         .write_ram = ssd1677_write_ram,
-        .write_ram_partial = NULL,  // Not supported (module is full-frame only)
+        .write_ram_partial = ssd1677_write_ram_partial,
+        .write_ram_partial_base = ssd1677_write_ram_partial_base,
         .sleep = ssd1677_sleep,
         .wake = ssd1677_wake,
     },

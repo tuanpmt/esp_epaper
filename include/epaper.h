@@ -90,6 +90,66 @@ esp_err_t epd_update_partial(epd_handle_t handle, uint16_t x, uint16_t y,
                               uint16_t w, uint16_t h, const uint8_t *buffer);
 
 /**
+ * @brief Check if the panel supports windowed partial updates
+ *
+ * True when the panel advertises EPD_CAP_PARTIAL and its controller implements
+ * windowed RAM writes. Does not imply a base image RAM exists; see
+ * epd_write_base_partial().
+ */
+bool epd_supports_partial(epd_handle_t handle);
+
+/**
+ * @brief Check if the panel exposes a base image RAM (see epd_write_base_partial())
+ */
+bool epd_supports_base_partial(epd_handle_t handle);
+
+/**
+ * @brief Stream a byte-aligned rectangle into the display RAM without refreshing
+ *
+ * Writes the rectangle into the current image RAM (0x24) only. The caller owns
+ * the base plane synchronization: after the panel finishes driving, the same
+ * rectangle must be committed via epd_write_base_partial() on controllers with
+ * a differential refresh sequence, so that the next refresh diffs against what
+ * is actually on screen.
+ *
+ * @param x Start X (must be multiple of 8)
+ * @param y Start Y
+ * @param w Width (must be multiple of 8)
+ * @param h Height
+ * @param buffer Pixel data (1 bit per pixel, MSB first)
+ */
+esp_err_t epd_write_partial(epd_handle_t handle, uint16_t x, uint16_t y,
+                            uint16_t w, uint16_t h, const uint8_t *buffer);
+
+/**
+ * @brief Stream a byte-aligned rectangle into the base image RAM
+ *
+ * Optional: only supported when the controller implements a base image plane
+ * (e.g. SSD1677 0x26). See epd_write_partial() for the synchronization contract.
+ *
+ * @param x Start X (must be multiple of 8)
+ * @param y Start Y
+ * @param w Width (must be multiple of 8)
+ * @param h Height
+ * @param buffer Pixel data (1 bit per pixel, MSB first)
+ */
+esp_err_t epd_write_base_partial(epd_handle_t handle, uint16_t x, uint16_t y,
+                                 uint16_t w, uint16_t h, const uint8_t *buffer);
+
+/**
+ * @brief Trigger a refresh of the previously streamed image without waiting
+ *
+ * Trigger-only counterpart to epd_update(): assumes the panel RAM already holds
+ * the frame to display (via epd_update(), epd_write_partial(), etc.) and issues
+ * the master activation, returning before the panel finishes driving. Call
+ * epd_wait_busy() before the next command sequence, or rely on the
+ * controller's wait-before-use guards to synchronize at the next access.
+ *
+ * @param mode Update mode (full/fast/partial)
+ */
+esp_err_t epd_update_partial_async(epd_handle_t handle, epd_update_mode_t mode);
+
+/**
  * @brief Set base image for partial updates
  */
 esp_err_t epd_set_base_image(epd_handle_t handle, const uint8_t *buffer);
