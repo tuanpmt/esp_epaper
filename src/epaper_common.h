@@ -18,9 +18,6 @@ uint16_t epd_get_width(epd_device_t *dev);
 uint16_t epd_get_height(epd_device_t *dev);
 const epd_panel_desc_t* epd_get_panel(epd_device_t *dev);
 bool epd_is_partial_ready(epd_device_t *dev);
-// True while an async update trigger is in flight: WAIT() then becomes a no-op
-// so the panel can keep driving in the background (see epd_update_async()).
-bool epd_is_wait_deferred(epd_device_t *dev);
 
 /*=============================================================================
  * Common SPI Macros
@@ -38,12 +35,7 @@ bool epd_is_wait_deferred(epd_device_t *dev);
 // timeout_ms: timeout in ms, 0 = infinite
 void epd_wait_busy_polarity(epd_spi_t *spi, uint32_t caps, uint32_t timeout_ms);
 
-// Convenience macro for controllers. Skips the poll while an async update is
-// being triggered (epd_update_async), so refresh can drive in the background.
-#define WAIT(dev) do { \
-    if (!epd_is_wait_deferred(dev)) { \
-        epd_wait_busy_polarity(epd_get_spi(dev), epd_get_panel(dev)->caps, 0); \
-    } \
-} while (0)
+// Convenience macro for controllers
+#define WAIT(dev) epd_wait_busy_polarity(epd_get_spi(dev), epd_get_panel(dev)->caps, 0)
 
 #endif // _EPAPER_COMMON_H_

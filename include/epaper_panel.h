@@ -25,7 +25,6 @@ typedef enum {
     EPD_CTRL_GDEY0154_LUT,  // GDEY0154D67 with custom LUT
     EPD_CTRL_ACEP_6COLOR,   // ACeP 6-color controller (GDEP073E01)
     EPD_CTRL_BWRY_4COLOR,   // BWRY 4-color controller (GDEY037F51)
-    EPD_CTRL_SSD1677,       // SSD1677 BW/4-gray panels (GDEQ0426T82, pixel X range, Y-decrement entry)
     EPD_CTRL_COUNT
 } epd_controller_type_t;
 
@@ -56,12 +55,6 @@ typedef struct {
     esp_err_t (*write_ram)(epd_device_t *dev, const uint8_t *data, uint32_t len);
     esp_err_t (*write_ram_partial)(epd_device_t *dev, uint16_t x, uint16_t y,
                                     uint16_t w, uint16_t h, const uint8_t *data);
-    // Writes a window into the base image RAM (0x26). Optional: only needed by
-    // controllers whose partial refresh sequence is differential against a
-    // separate base plane (e.g. SSD1677 fast 0xFC), where the base must be
-    // committed after the panel finishes driving.
-    esp_err_t (*write_ram_partial_base)(epd_device_t *dev, uint16_t x, uint16_t y,
-                                         uint16_t w, uint16_t h, const uint8_t *data);
     esp_err_t (*sleep)(epd_device_t *dev);
     esp_err_t (*wake)(epd_device_t *dev);
 } epd_controller_ops_t;
