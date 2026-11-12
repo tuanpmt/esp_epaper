@@ -21,6 +21,8 @@ static const char *TAG = "ssd16xx";
 esp_err_t ssd16xx_init(epd_device_t *dev)
 {
     epd_spi_t *spi = epd_get_spi(dev);
+    const epd_panel_desc_t *panel = epd_get_panel(dev);
+    uint8_t source_shift = panel->source_shift_bytes;
     uint16_t w = epd_get_width(dev);
     uint16_t h = epd_get_height(dev);
 
@@ -41,9 +43,9 @@ esp_err_t ssd16xx_init(epd_device_t *dev)
     CMD(spi, 0x11);  // Data entry mode
     DATA(spi, 0x03);  // Y increment, X increment
 
-    CMD(spi, 0x44);  // Set RAM X start/end
-    DATA(spi, 0x00);
-    DATA(spi, (w / 8) - 1);
+    CMD(spi, 0x44);  // Set RAM X start/end (offset by source_shift for shifted panels)
+    DATA(spi, source_shift);
+    DATA(spi, source_shift + (w / 8) - 1);
 
     CMD(spi, 0x45);  // Set RAM Y start/end
     DATA(spi, 0x00);
@@ -54,15 +56,18 @@ esp_err_t ssd16xx_init(epd_device_t *dev)
     CMD(spi, 0x3C);  // Border waveform
     DATA(spi, 0x05);
 
+    // Display update control. The second byte selects the OTP configuration: shifted
+    // panels (source_shift_bytes != 0, e.g. GDEY029T71H) need 0x00 here, others 0x80.
+    // GxEPD2: "OTP set for 168x384, but TFT shifted: S8..S175 connected to TFT sources".
     CMD(spi, 0x21);  // Display update control
     DATA(spi, 0x00);
-    DATA(spi, 0x80);
+    DATA(spi, panel->source_shift_bytes ? 0x00 : 0x80);
 
     CMD(spi, 0x18);  // Temperature sensor
     DATA(spi, 0x80);  // Internal sensor
 
-    CMD(spi, 0x4E);  // Set RAM X counter
-    DATA(spi, 0x00);
+    CMD(spi, 0x4E);  // Set RAM X counter (offset by source_shift)
+    DATA(spi, source_shift);
 
     CMD(spi, 0x4F);  // Set RAM Y counter
     DATA(spi, 0x00);
@@ -81,9 +86,30 @@ esp_err_t ssd16xx_init(epd_device_t *dev)
 static esp_err_t ssd16xx_update_full(epd_device_t *dev)
 {
     epd_spi_t *spi = epd_get_spi(dev);
+    const epd_panel_desc_t *panel = epd_get_panel(dev);
 
-    CMD(spi, 0x22);  // Display update control
-    DATA(spi, 0xF7);  // Full update sequence
+    // Display update control: bypass RED as 0. GxEPD2 writes this before every full
+    // update. The fast variant additionally overrides the temperature register.
+    CMD(spi, 0x21);
+    DATA(spi, 0x40);
+    DATA(spi, 0x00);
+
+    if (panel->fast_full_update) {
+        CMD(spi, 0x1A);  // Write temperature register
+        DATA(spi, 0x6E);
+        DATA(spi, 0x00);
+        CMD(spi, 0x22);  // Load temperature value
+        DATA(spi, 0x91);
+        CMD(spi, 0x20);
+        vTaskDelay(pdMS_TO_TICKS(2));
+
+        CMD(spi, 0x22);  // Display update (reuse LUT)
+        DATA(spi, 0xC7);
+    } else {
+        CMD(spi, 0x22);  // Display update (loads LUT, drives, powers down)
+        DATA(spi, 0xF7);
+    }
+
     CMD(spi, 0x20);  // Master activation
     WAIT(dev);
 
@@ -130,13 +156,25 @@ static esp_err_t ssd16xx_update_fast(epd_device_t *dev)
 static esp_err_t ssd16xx_update_partial(epd_device_t *dev)
 {
     epd_spi_t *spi = epd_get_spi(dev);
+    const epd_panel_desc_t *panel = epd_get_panel(dev);
 
-    CMD(spi, 0x3C);  // Border waveform for partial
-    DATA(spi, 0x80);
+    if (panel->ssd1685_partial) {
+        // SSD1685 partial (GxEPD2 GDEY029T71H::_Update_Part): restore RED normal and
+        // run the powered fast partial LUT (0x22=0xDC), which keeps the panel powered
+        // so the next update starts without a full power-up cycle.
+        CMD(spi, 0x21);  // Display update control
+        DATA(spi, 0x00);
+        DATA(spi, 0x00);
+        CMD(spi, 0x22);  // Display update
+        DATA(spi, 0xDC);
+    } else {
+        CMD(spi, 0x3C);  // Border waveform for partial
+        DATA(spi, 0x80);
+        CMD(spi, 0x22);  // Display update
+        DATA(spi, 0xFF);  // Partial update sequence
+    }
 
-    CMD(spi, 0x22);
-    DATA(spi, 0xFF);  // Partial update sequence
-    CMD(spi, 0x20);
+    CMD(spi, 0x20);  // Master activation
     WAIT(dev);
 
     return ESP_OK;
@@ -162,11 +200,12 @@ esp_err_t ssd16xx_update(epd_device_t *dev, epd_update_mode_t mode)
 esp_err_t ssd16xx_write_ram(epd_device_t *dev, const uint8_t *data, uint32_t len)
 {
     epd_spi_t *spi = epd_get_spi(dev);
+    const epd_panel_desc_t *panel = epd_get_panel(dev);
     bool partial_ready = epd_is_partial_ready(dev);
 
-    // Reset RAM address to (0, 0)
+    // Reset RAM address to (source_shift, 0)
     CMD(spi, 0x4E);
-    DATA(spi, 0x00);
+    DATA(spi, panel->source_shift_bytes);
     CMD(spi, 0x4F);
     DATA(spi, 0x00);
     DATA(spi, 0x00);
@@ -180,7 +219,7 @@ esp_err_t ssd16xx_write_ram(epd_device_t *dev, const uint8_t *data, uint32_t len
     // compare old (0x26) vs new (0x24) for partial update
     if (!partial_ready) {
         CMD(spi, 0x4E);
-        DATA(spi, 0x00);
+        DATA(spi, panel->source_shift_bytes);
         CMD(spi, 0x4F);
         DATA(spi, 0x00);
         DATA(spi, 0x00);
@@ -196,9 +235,10 @@ esp_err_t ssd16xx_write_ram_partial(epd_device_t *dev, uint16_t x, uint16_t y,
                                      uint16_t w, uint16_t h, const uint8_t *data)
 {
     epd_spi_t *spi = epd_get_spi(dev);
+    const epd_panel_desc_t *panel = epd_get_panel(dev);
     uint16_t panel_h = epd_get_height(dev);
 
-    uint16_t x_start = x / 8;
+    uint16_t x_start = x / 8 + panel->source_shift_bytes;
     uint16_t x_end = x_start + w / 8 - 1;
     uint16_t y_start = panel_h - 1 - y;
     uint16_t y_end = y_start - h + 1;

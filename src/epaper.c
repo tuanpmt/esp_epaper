@@ -23,6 +23,7 @@ struct epd_device {
     uint8_t *framebuffer;
     bool initialized;
     bool partial_ready;
+    uint32_t partial_count;
 };
 
 /*=============================================================================
@@ -223,6 +224,20 @@ esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode
         mode = EPD_UPDATE_FULL;
     }
 
+    // Periodic full refresh: repeated partial writes on the same GDDRAM base
+    // image accumulate ghosting, so every Nth partial refresh the whole panel.
+    // The conversion redraws the identical current buffer, so the base image
+    // stays valid and subsequent partials can continue immediately.
+    bool converted_to_full = false;
+    if (mode == EPD_UPDATE_PARTIAL && dev->partial_ready && dev->panel->full_refresh_interval > 0) {
+        if (++dev->partial_count >= dev->panel->full_refresh_interval) {
+            dev->partial_count = 0;
+            mode = EPD_UPDATE_FULL;
+            converted_to_full = true;
+            ESP_LOGI(TAG, "Periodic full refresh after %d partial updates", dev->panel->full_refresh_interval);
+        }
+    }
+
     // Copy to framebuffer
     memcpy(dev->framebuffer, buffer, dev->buffer_size);
 
@@ -245,8 +260,9 @@ esp_err_t epd_update(epd_handle_t handle, const uint8_t *buffer, epd_update_mode
         return ESP_OK;
     }
 
-    // Full refresh resets partial mode
-    if (mode == EPD_UPDATE_FULL) {
+    // Full refresh resets partial mode (unless it was the periodic conversion,
+    // which refreshed the same base image and keeps partial mode valid)
+    if (mode == EPD_UPDATE_FULL && !converted_to_full) {
         dev->partial_ready = false;
         if (!dev->initialized) {
             ret = dev->ops->init(dev);
@@ -302,6 +318,10 @@ esp_err_t epd_sleep(epd_handle_t handle)
 
     epd_device_t *dev = handle;
     if (dev->ops->sleep) {
+        // Deep sleep clears GDDRAM, so the base image for partial updates is
+        // lost; the next partial update must re-establish it with a full refresh.
+        dev->partial_ready = false;
+        dev->partial_count = 0;
         dev->initialized = false;
         return dev->ops->sleep(dev);
     }
@@ -317,6 +337,10 @@ esp_err_t epd_wake(epd_handle_t handle)
         esp_err_t ret = dev->ops->wake(dev);
         if (ret == ESP_OK) {
             dev->initialized = true;
+            // Wake re-initializes the panel and clears GDDRAM, so the next
+            // partial update must re-establish the base with a full refresh.
+            dev->partial_ready = false;
+            dev->partial_count = 0;
         }
         return ret;
     }
