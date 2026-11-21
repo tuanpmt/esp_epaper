@@ -229,6 +229,100 @@ static void test_quant_rect_at_panel_edges(void)
     CHECK(edge_case((epd_rect_t){470, 790, 10, 10}));
 }
 
+// Full-size frames (Plus: 684 x 1216 logical, 1216 x 684 panel), every
+// mode, rotations 90/270 with mirrors, unaligned rects: every panel pixel
+// inside the mapped rect matches a per-pixel reference, every other pixel
+// keeps its old value. Guards the tiled walk of epd_quant_rect.
+static const uint8_t k_bayer[4][4] = {      // epd_quant.c s_bayer
+    {  8, 136,  40, 168 }, { 200,  72, 232, 104 }, {  56, 184,  24, 152 }, { 248, 120, 216,  88 },
+};
+
+static int ref_level(const epd_quant_t *q, uint8_t v, int px, int py)
+{
+    switch (q->mode) {
+    case EPD_Q_BW:        return q->lut[v] > 0;
+    case EPD_Q_BW_DITHER: return q->lut[v] > k_bayer[py & 3][px & 3];
+    default:              return q->lut[v];
+    }
+}
+
+static int got_level(const epd_quant_t *q, const uint8_t *p0, const uint8_t *p1, size_t st, int px, int py)
+{
+    switch (q->mode) {
+    case EPD_Q_GRAY4: {
+        const uint8_t b = p0[(size_t)py * st + (size_t)(px >> 1)];
+        return (px & 1) ? (b & 15) : (b >> 4);
+    }
+    case EPD_Q_GRAY2: return get_bit(p0, st, px, py) | (get_bit(p1, st, px, py) << 1);
+    default:          return get_bit(p0, st, px, py);
+    }
+}
+
+static void test_quant_full_frame_matches_reference(void)
+{
+    enum { LW = 684, LH = 1216, PW = 1216, PH = 684 };
+    static uint8_t l8[LW * LH], p0[PW * PH], p1[PW * PH], o0[PW * PH], o1[PW * PH];
+    srand(11);
+    for (size_t i = 0; i < sizeof(l8); i++) {
+        l8[i] = (uint8_t)rand();
+    }
+    const epd_qmode_t modes[] = {EPD_Q_GRAY4, EPD_Q_BW, EPD_Q_BW_DITHER, EPD_Q_GRAY2};
+    const epd_rot_t rots[] = {EPD_ROT_90, EPD_ROT_270};
+    const epd_rect_t rects[] = {{0, 0, LW, LH}, {3, 5, 101, 333}, {600, 1100, 84, 116}, {1, 1, 7, 9}, {0, 777, LW, 1}};
+    int bad = 0;
+    for (size_t m = 0; m < 4; m++) {
+        for (size_t r = 0; r < 2; r++) {
+            for (int mir = 0; mir < 2; mir++) {
+                epd_quant_t q;
+                epd_quant_init(&q, LW, LH, PW, PH, rots[r]);
+                q.mirror_x = mir;
+                epd_quant_set_mode(&q, modes[m], (m & 1) != 0);
+                const size_t st = modes[m] == EPD_Q_GRAY4 ? PW / 2 : PW / 8;
+                for (size_t k = 0; k < sizeof(rects) / sizeof(rects[0]); k++) {
+                    for (size_t i = 0; i < sizeof(p0); i++) {
+                        p0[i] = (uint8_t)(i * 7u + k);
+                        p1[i] = (uint8_t)(i * 13u + k);
+                    }
+                    memcpy(o0, p0, sizeof(p0));
+                    memcpy(o1, p1, sizeof(p1));
+                    epd_quant_rect(&q, l8, LW, rects[k], p0, p1, st);
+                    const epd_rect_t pr = epd_quant_map_rect(&q, rects[k]);
+                    for (int py = 0; py < PH && bad < 5; py++) {
+                        for (int px = 0; px < PW && bad < 5; px++) {
+                            const bool in = px >= pr.x && px < pr.x + pr.w && py >= pr.y && py < pr.y + pr.h;
+                            int want;
+                            if (in) {
+                                // the logical pixel that maps to (px, py): ref_map inverted
+                                int lx, ly, tx, ty;
+                                if (rots[r] == EPD_ROT_90) {
+                                    int x = mir ? PW - 1 - px : px;
+                                    ly = x;
+                                    lx = PH - 1 - py;
+                                } else {
+                                    int x = mir ? PW - 1 - px : px;
+                                    ly = PW - 1 - x;
+                                    lx = py;
+                                }
+                                ref_map(&q, lx, ly, &tx, &ty);
+                                CHECK(tx == px && ty == py);
+                                want = ref_level(&q, l8[(size_t)ly * LW + (size_t)lx], px, py);
+                            } else {
+                                want = got_level(&q, o0, o1, st, px, py);
+                            }
+                            if (got_level(&q, p0, p1, st, px, py) != want) {
+                                printf("mode %d rot %d mir %d rect %zu: px %d py %d got %d want %d\n", (int)modes[m],
+                                       (int)rots[r], mir, k, px, py, got_level(&q, p0, p1, st, px, py), want);
+                                bad++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    CHECK(bad == 0);
+}
+
 int main(void)
 {
     test_quant_map_rect_rot90();
@@ -239,5 +333,6 @@ int main(void)
     test_quant_gray2_planes();
     test_quant_gray4_nibbles();
     test_quant_rect_at_panel_edges();
+    test_quant_full_frame_matches_reference();
     TEST_DONE("quant");
 }

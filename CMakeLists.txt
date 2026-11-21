@@ -44,6 +44,7 @@ idf_component_register(
         log
 )
 
-# The waveform inner loop runs once per panel byte per phase (85 Hz): optimise
-# it even in debug (-Og) builds; the last -O on the command line wins
-set_source_files_properties("src/epd_wf.c" "src/epd_wf_mt.c" PROPERTIES COMPILE_OPTIONS "-O2")
+# The waveform inner loop runs once per panel byte per phase (85 Hz) and the
+# quantizer once per pixel per LVGL frame: optimise them even in debug (-Og)
+# builds; the last -O on the command line wins
+set_source_files_properties("src/epd_wf.c" "src/epd_wf_mt.c" "src/epd_quant.c" PROPERTIES COMPILE_OPTIONS "-O2")

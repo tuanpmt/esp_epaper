@@ -180,22 +180,42 @@ void epd_quant_rect(const epd_quant_t *q, const uint8_t *l8, size_t l8_stride,
     const ptrdiff_t row_step = (ptrdiff_t)(ry - ly) * stride + (rx - lx);
     ptrdiff_t idx = (ptrdiff_t)ly * stride + lx;
 
-    const int x0 = p.x, x1 = p.x + p.w;
-    for (int py = p.y; py < p.y + p.h; py++, idx += row_step) {
-        size_t off = (size_t)py * pan_stride;
-        switch (q->mode) {
-        case EPD_Q_BW:
-            row_1bpp(plane0 + off, x0, x1, l8, idx, col_step, q->lut, s_no_dither);
-            break;
-        case EPD_Q_BW_DITHER:
-            row_1bpp(plane0 + off, x0, x1, l8, idx, col_step, q->lut, s_bayer[py & 3]);
-            break;
-        case EPD_Q_GRAY2:
-            row_gray2(plane0 + off, plane1 + off, x0, x1, l8, idx, col_step, q->lut);
-            break;
-        case EPD_Q_GRAY4:
-            row_gray4(plane0 + off, x0, x1, l8, idx, col_step, q->lut);
-            break;
+    // Tiled walk. With a 90/270 rotation a panel row reads one logical
+    // column: every pixel in another L8 row (cache line). Row by row, the
+    // next panel row needs the same lines again, more than the data cache
+    // holds, so almost every read missed (device: 270 ms per full frame,
+    // competing with the waveform for PSRAM). In tiles of TILE_ROWS panel
+    // rows x TILE_COLS panel pixels the source lines are reused while
+    // cached: 64 panel rows use 64 consecutive bytes (one cache line) of each
+    // L8 row, 128 columns keep about 8 KB of source plus 4 KB of output hot.
+    // Tile edges are multiples of 8 pixels, so only the rect's own edges
+    // take the partial-byte paths. Output identical to a row walk.
+    enum { TILE_ROWS = 64, TILE_COLS = 128 };
+    const int x0 = p.x, x1 = p.x + p.w, y1 = p.y + p.h;
+    for (int by = p.y; by < y1; by += TILE_ROWS) {
+        const int by1 = by + TILE_ROWS < y1 ? by + TILE_ROWS : y1;
+        for (int cx = x0; cx < x1;) {
+            int cx1 = (cx / TILE_COLS + 1) * TILE_COLS;
+            cx1 = cx1 < x1 ? cx1 : x1;
+            for (int py = by; py < by1; py++) {
+                const size_t off = (size_t)py * pan_stride;
+                const ptrdiff_t i = idx + (ptrdiff_t)(py - p.y) * row_step + (ptrdiff_t)(cx - x0) * col_step;
+                switch (q->mode) {
+                case EPD_Q_BW:
+                    row_1bpp(plane0 + off, cx, cx1, l8, i, col_step, q->lut, s_no_dither);
+                    break;
+                case EPD_Q_BW_DITHER:
+                    row_1bpp(plane0 + off, cx, cx1, l8, i, col_step, q->lut, s_bayer[py & 3]);
+                    break;
+                case EPD_Q_GRAY2:
+                    row_gray2(plane0 + off, plane1 + off, cx, cx1, l8, i, col_step, q->lut);
+                    break;
+                case EPD_Q_GRAY4:
+                    row_gray4(plane0 + off, cx, cx1, l8, i, col_step, q->lut);
+                    break;
+                }
+            }
+            cx = cx1;
         }
     }
 }
