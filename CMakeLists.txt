@@ -2,7 +2,6 @@ idf_component_register(
     SRCS
         "src/epaper.c"
         "src/epaper_spi.c"
-        "src/epaper_lvgl.c"
         "src/epaper_common.c"
         "src/epaper_registry.c"
         "src/controllers/ssd16xx.c"
@@ -12,11 +11,10 @@ idf_component_register(
     INCLUDE_DIRS
         "include"
     REQUIRES
-        driver
         esp_driver_gpio
         esp_driver_spi
         esp_timer
-    PRIV_REQUIRES
         lvgl
+    PRIV_REQUIRES
         esp_psram
 )
