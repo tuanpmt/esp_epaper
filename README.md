@@ -1,3 +1,5 @@
+> **v3.0.0**: new L8 LVGL 9.6 pipeline (`epd_quant`, `epd_dirty`, `epd_sched`, `epd_bus`, `epd_lvgl`) and an SSD1677 controller (`epd_ssd1677`). The RGB565 glue of v2 is removed; see CHANGELOG.md. Host tests: `test_host/run.sh`.
+
 # ESP E-Paper Component
 
 [![Component Registry](https://components.espressif.com/components/tuanpmt/esp_epaper/badge.svg)](https://components.espressif.com/components/tuanpmt/esp_epaper)
