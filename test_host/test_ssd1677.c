@@ -3,6 +3,7 @@
 #include "check.h"
 #include "epd_bus_rec.h"
 #include "epd_ssd1677.h"
+#include "ssd1677_lut.h"
 
 static epd_bus_rec_t R;
 static epd_ssd1677_t *C;
@@ -184,6 +185,92 @@ static void test_ssd1677_deep_sleep(void)
     CHECK(cmd_is(nth_cmd(0x10, 0), 0x10, (const uint8_t[]){0x01}, 1));
 }
 
+// Shorter timing: group 0 TP A 13 -> 6, group 1 TP A 4 -> 2, faster frame rate
+static epd_ssd1677_timing_t shorter_timing(void)
+{
+    epd_ssd1677_timing_t t;
+    epd_ssd1677_partial_timing(C, &t);
+    t.tp[0][0] = 6;
+    t.tp[1][0] = 2;
+    memset(t.fr, 0x44, sizeof(t.fr));
+    return t;
+}
+
+static void test_ssd1677_lut_patch_only_timing_bytes(void)
+{
+    setup(false);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);   // stock partial LUT loaded
+    epd_bus_rec_fire_busy(&R);
+    const epd_ssd1677_timing_t t = shorter_timing();
+    CHECK(epd_ssd1677_set_partial_timing(C, &t) == ESP_OK);
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);   // patched table reloads
+    epd_bus_rec_fire_busy(&R);
+    const int lut = nth_cmd(0x32, 0);
+    CHECK(lut >= 0 && R.log[lut].len == SSD1677_LUT_WAVE_BYTES);
+    if (lut >= 0 && R.log[lut].len == SSD1677_LUT_WAVE_BYTES) {
+        const uint8_t *w = R.log[lut].bytes;
+        CHECK(memcmp(w, ssd1677_lut_partial, 50) == 0);   // VS phase rows never change
+        CHECK(w[50] == 6 && w[55] == 2);                  // TP A of groups 0 and 1
+        for (int i = 100; i < 105; i++) {
+            CHECK(w[i] == 0x44);                          // frame rate
+        }
+        int diff = 0;
+        for (int i = 0; i < SSD1677_LUT_WAVE_BYTES; i++) {
+            diff += w[i] != ssd1677_lut_partial[i];
+        }
+        CHECK(diff == 7);                                 // nothing else moved
+    }
+    // voltages keep the stock values
+    CHECK(cmd_is(nth_cmd(0x03, 0), 0x03, &ssd1677_lut_partial[105], 1));
+    CHECK(cmd_is(nth_cmd(0x04, 0), 0x04, &ssd1677_lut_partial[106], 3));
+    CHECK(cmd_is(nth_cmd(0x2C, 0), 0x2C, &ssd1677_lut_partial[109], 1));
+    // the stock table itself is untouched
+    CHECK(ssd1677_lut_partial[50] == 0x0D && ssd1677_lut_partial[55] == 0x04 && ssd1677_lut_partial[100] == 0x22);
+
+    // the safety boundary: timing may only get shorter than stock
+    epd_ssd1677_timing_t longer = t;
+    longer.tp[0][0] = 0x0E;
+    CHECK(epd_ssd1677_set_partial_timing(C, &longer) == ESP_ERR_INVALID_ARG);
+    longer = t;
+    longer.tp[2][1] = 1;                                  // a stock-empty phase
+    CHECK(epd_ssd1677_set_partial_timing(C, &longer) == ESP_ERR_INVALID_ARG);
+    longer = t;
+    longer.rp[0] = 1;
+    CHECK(epd_ssd1677_set_partial_timing(C, &longer) == ESP_ERR_INVALID_ARG);
+
+    // NULL restores the stock table, loaded again at the next partial
+    CHECK(epd_ssd1677_set_partial_timing(C, NULL) == ESP_OK);
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    const int stock = nth_cmd(0x32, 0);
+    CHECK(cmd_is(stock, 0x32, ssd1677_lut_partial, SSD1677_LUT_WAVE_BYTES));
+}
+
+static void test_ssd1677_partial_timing_roundtrip(void)
+{
+    setup(false);
+    epd_ssd1677_timing_t t;
+    epd_ssd1677_partial_timing(C, &t);
+    CHECK(t.tp[0][0] == 0x0D && t.tp[1][0] == 0x04 && t.fr[0] == 0x22 && t.fr[4] == 0x22);   // stock
+    CHECK(t.tp[0][1] == 0 && t.rp[0] == 0);
+    const epd_ssd1677_timing_t want = shorter_timing();
+    CHECK(epd_ssd1677_set_partial_timing(C, &want) == ESP_OK);
+    epd_ssd1677_partial_timing(C, &t);
+    CHECK(memcmp(&t, &want, sizeof(t)) == 0);
+    // a refused timing leaves the current one in place
+    epd_ssd1677_timing_t bad = want;
+    bad.tp[9][3] = 0xFF;
+    CHECK(epd_ssd1677_set_partial_timing(C, &bad) == ESP_ERR_INVALID_ARG);
+    epd_ssd1677_partial_timing(C, &t);
+    CHECK(memcmp(&t, &want, sizeof(t)) == 0);
+    // reinit after a BUSY timeout keeps the tuned timing
+    CHECK(epd_ssd1677_reinit(C) == ESP_OK);
+    epd_ssd1677_partial_timing(C, &t);
+    CHECK(memcmp(&t, &want, sizeof(t)) == 0);
+}
+
 int main(void)
 {
     test_ssd1677_init_sequence();
@@ -193,6 +280,8 @@ int main(void)
     test_ssd1677_gray_mode();
     test_ssd1677_busy_timeout();
     test_ssd1677_deep_sleep();
+    test_ssd1677_lut_patch_only_timing_bytes();
+    test_ssd1677_partial_timing_roundtrip();
     epd_ssd1677_free(C);
     epd_bus_rec_free(&R);
     TEST_DONE("ssd1677");

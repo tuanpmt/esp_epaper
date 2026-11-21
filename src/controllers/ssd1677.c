@@ -36,12 +36,20 @@
 #define BUSY_POLL_LIMIT_MS 3000
 #define ARM_SETTLE_MS 1         // let BUSY rise after 0x20 before arming the idle interrupt
 
+// Partial LUT timing layout inside the 0x32 wave bytes
+#define LUT_TIMING_AT 50        // after 5 VS rows x 10 groups
+#define LUT_GROUPS 10
+#define LUT_GROUP_BYTES 5       // TP A, B, C, D, RP
+#define LUT_FR_AT 100
+#define LUT_FR_BYTES 5
+
 typedef enum { LUT_NONE, LUT_FAST, LUT_PARTIAL, LUT_GRAY } lut_t;
 
 struct epd_ssd1677 {
     epd_ssd1677_cfg_t cfg;
     lut_t lut;
     bool border_partial;    // border waveform currently set for partial refreshes
+    uint8_t partial_lut[SSD1677_LUT_SIZE];   // stock partial table with the tuned timing
     uint8_t *row_buf;       // one window, packed contiguously for a single data transfer
     size_t row_buf_size;
 };
@@ -70,7 +78,7 @@ static esp_err_t wait_idle(epd_ssd1677_t *c)
 
 static esp_err_t load_lut(epd_ssd1677_t *c, lut_t which)
 {
-    const uint8_t *t = which == LUT_FAST ? ssd1677_lut_fast : which == LUT_PARTIAL ? ssd1677_lut_partial
+    const uint8_t *t = which == LUT_FAST ? ssd1677_lut_fast : which == LUT_PARTIAL ? c->partial_lut
                                                                                    : ssd1677_lut_gray4;
     // Stock loader order: VCOM, gate, source, then the wave table
     esp_err_t err = cmd1(c, CMD_VCOM, t[109]);
@@ -159,6 +167,7 @@ esp_err_t epd_ssd1677_init(const epd_ssd1677_cfg_t *cfg, epd_ssd1677_t **out)
         return ESP_ERR_NO_MEM;
     }
     c->cfg = *cfg;
+    memcpy(c->partial_lut, ssd1677_lut_partial, SSD1677_LUT_SIZE);
     const esp_err_t err = init_sequence(c);
     if (err != ESP_OK) {
         free(c);
@@ -284,4 +293,47 @@ esp_err_t epd_ssd1677_deep_sleep(epd_ssd1677_t *c)
 esp_err_t epd_ssd1677_reinit(epd_ssd1677_t *c)
 {
     return c ? init_sequence(c) : ESP_ERR_INVALID_ARG;
+}
+
+void epd_ssd1677_partial_timing(const epd_ssd1677_t *c, epd_ssd1677_timing_t *out)
+{
+    if (!c || !out) {
+        return;
+    }
+    for (int g = 0; g < LUT_GROUPS; g++) {
+        const uint8_t *grp = &c->partial_lut[LUT_TIMING_AT + g * LUT_GROUP_BYTES];
+        memcpy(out->tp[g], grp, 4);
+        out->rp[g] = grp[4];
+    }
+    memcpy(out->fr, &c->partial_lut[LUT_FR_AT], LUT_FR_BYTES);
+}
+
+esp_err_t epd_ssd1677_set_partial_timing(epd_ssd1677_t *c, const epd_ssd1677_timing_t *t)
+{
+    if (!c) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t lut[SSD1677_LUT_SIZE];
+    memcpy(lut, ssd1677_lut_partial, SSD1677_LUT_SIZE);
+    if (t) {
+        for (int g = 0; g < LUT_GROUPS; g++) {
+            uint8_t *grp = &lut[LUT_TIMING_AT + g * LUT_GROUP_BYTES];
+            for (int i = 0; i < 4; i++) {
+                if (t->tp[g][i] > grp[i]) {
+                    return ESP_ERR_INVALID_ARG;
+                }
+                grp[i] = t->tp[g][i];
+            }
+            if (t->rp[g] > grp[4]) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            grp[4] = t->rp[g];
+        }
+        memcpy(&lut[LUT_FR_AT], t->fr, LUT_FR_BYTES);
+    }
+    memcpy(c->partial_lut, lut, SSD1677_LUT_SIZE);
+    if (c->lut == LUT_PARTIAL) {
+        c->lut = LUT_NONE;  // reload at the next partial/fast start
+    }
+    return ESP_OK;
 }
