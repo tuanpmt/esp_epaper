@@ -1,8 +1,8 @@
 #pragma once
 
 // One refresh of a parallel panel: rails on, then for every waveform phase
-// check PWR_GOOD, start the scan of phase k, compute phase k+1 into the other
-// buffer while the bus is busy, wait for the scan, keep the phase rate (never
+// start the scan of phase k on its slot, check PWR_GOOD and compute phase k+1
+// into the other buffer while the bus is busy, wait for the scan, keep the phase rate (never
 // faster than phase_us), and rails off at the end or on any error. Pure
 // control flow over injected operations, host-tested; the caller supplies
 // the PMIC (epd_tps65185), the scan bus (epd_par_bus) and the compute step
@@ -45,6 +45,9 @@ typedef struct {
     uint32_t compute_max_us;    // slowest phase computation
     uint32_t late_phases;       // phases that started > phase_us / 4 after their slot
     uint16_t reused;            // phases that rescanned the previous buffer
+    uint32_t lag_us_max;        // latest phase start after its slot on the timeline
+    uint32_t frame_us_max;      // scan_start call to scan_wait return
+    uint32_t pg_us_max;         // PWR_GOOD check (runs during the scan)
 } epd_par_run_stats_t;
 
 // Phase k starts no earlier than origin + ceil(k * 1e6 / phase_hz), origin =

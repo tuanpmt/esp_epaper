@@ -94,7 +94,9 @@ static void test_run_order_double_buffer(void)
     setup();
     epd_par_run_stats_t st;
     CHECK(epd_par_run(&ops, 3, 85, 1000, bufs, &st) == EPD_RUN_OK);
-    CHECK(strcmp(f.log, "ON C0 P S0 C1 W P S1 C2 W P S2 W OFF ") == 0);
+    // PWR_GOOD is read while the frame scans (an I2C read takes longer than
+    // the 90 us between two frames of the 85 Hz timeline: device c1)
+    CHECK(strcmp(f.log, "ON C0 S0 P C1 W S1 P C2 W S2 P W OFF ") == 0);
     CHECK(f.computed[0] == b0 && f.computed[1] == b1 && f.computed[2] == b0);
     CHECK(f.scanned[0] == b0 && f.scanned[1] == b1 && f.scanned[2] == b0);
     CHECK(st.phases_done == 3 && !st.unknown);
@@ -133,11 +135,24 @@ static void test_run_pg_drop_aborts_and_powers_off(void)
     f.pg_fail_at = 2;
     epd_par_run_stats_t st;
     CHECK(epd_par_run(&ops, 6, 85, 1000, bufs, &st) == EPD_RUN_PG_DROP);
-    CHECK(f.scans == 2);            // no scan after the failed check
     CHECK(f.hv_offs == 1);
     CHECK(st.phases_done == 2 && st.unknown);
+    // the failed check is during frame 2: rails off at once (XOE first), then
+    // that frame is let end; no further frame starts
+    CHECK(strstr(f.log, "S2 p OFF W ") != NULL);
     const size_t n = strlen(f.log);
-    CHECK(n > 4 && strcmp(f.log + n - 4, "OFF ") == 0);
+    CHECK(n > 2 && strcmp(f.log + n - 2, "W ") == 0);
+    CHECK(strstr(f.log, "S3") == NULL);
+}
+
+static void test_run_phase_timing_stats(void)
+{
+    setup();
+    f.compute_us = 3000;
+    epd_par_run_stats_t st;
+    CHECK(epd_par_run(&ops, 4, 85, 1000, bufs, &st) == EPD_RUN_OK);
+    CHECK(st.lag_us_max <= 1);          // every phase on its slot
+    CHECK(st.frame_us_max == 11660);    // scan_start to scan_wait return (fake frame)
 }
 
 static void test_run_scan_error_marks_unknown(void)
@@ -179,7 +194,7 @@ static void test_run_reuses_identical_phase(void)
     f.reuse_mask = (1u << 1) | (1u << 2);   // phases 1 and 2 repeat phase 0
     epd_par_run_stats_t st;
     CHECK(epd_par_run(&ops, 4, 85, 1000, bufs, &st) == EPD_RUN_OK);
-    CHECK(strcmp(f.log, "ON C0 P S0 R1 W P S1 R2 W P S2 C3 W P S3 W OFF ") == 0);
+    CHECK(strcmp(f.log, "ON C0 S0 P R1 W S1 P R2 W S2 P C3 W S3 P W OFF ") == 0);
     CHECK(f.scanned[0] == b0 && f.scanned[1] == b0 && f.scanned[2] == b0);
     CHECK(f.computed[3] == b1 && f.scanned[3] == b1);   // never the buffer being scanned
     CHECK(st.reused == 2);
@@ -194,5 +209,6 @@ int main(void)
     test_run_budget_exceeded_aborts();
     test_run_hv_fail_no_scan();
     test_run_reuses_identical_phase();
+    test_run_phase_timing_stats();
     TEST_DONE("par_run");
 }

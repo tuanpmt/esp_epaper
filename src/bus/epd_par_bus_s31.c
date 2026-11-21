@@ -50,6 +50,7 @@ extern volatile rmt_symbol_word_t RMTMEM[];
 
 static struct {
     bool ready;
+    bool routed;                // pads on the peripherals for the current refresh
     epd_s31_bus_cfg_t cfg;
     epd_par_timing_t t;
     uint16_t rows;
@@ -240,8 +241,12 @@ static esp_err_t scan_start(void *ctx, const uint8_t *buf)
     if (!s.ready || idx < 0) {
         return ESP_ERR_INVALID_ARG;
     }
+    const int64_t t_entry = esp_timer_get_time();
     if (s.cfg.route_pins) {
-        route(true);
+        if (!s.routed) {    // once per refresh, as stock keeps them routed (park unroutes)
+            route(true);
+            s.routed = true;
+        }
         if (s.cfg.drive_oe) {
             oe(true);   // stock: XOE high after power-on (epd_board...c:952-956), MODE high for the refresh (render_lcd.c:199)
         }
@@ -264,6 +269,7 @@ static esp_err_t scan_start(void *ctx, const uint8_t *buf)
     frame_start_locked();
     s.t_lcd_start = esp_timer_get_time();
     portEXIT_CRITICAL(&s.mux);
+    s.st.last_start_us = (uint32_t)(s.t_lcd_start - t_entry);
     return ESP_OK;
 }
 
@@ -292,8 +298,9 @@ static esp_err_t scan_wait(void *ctx, uint32_t timeout_us)
         oe(false);
     }
     frame_stop();
-    if (s.cfg.route_pins) {
-        route(false);
+    if (err != ESP_OK && s.cfg.route_pins && s.routed) {
+        route(false);   // a failed frame ends the refresh: pads back to their idle GPIO levels
+        s.routed = false;
     }
     if (s.underrun_seen) {
         s.st.underruns++;
@@ -309,6 +316,7 @@ static esp_err_t scan_wait(void *ctx, uint32_t timeout_us)
         const int64_t ckv_end = s.t_rmt_start + (int64_t)(s.rows + CKV_EXTRA_LINES) * s.t.line_ns / 1000;
         s.st.last_ckv_margin_us = (int32_t)(ckv_end - s.t_eof);
         s.st.last_lead_ns = (uint32_t)((s.t_lcd_start - s.t_rmt_start) * 1000);
+        s.st.last_tail_us = (uint32_t)(esp_timer_get_time() - s.t_vsync);
     }
     return err;
 }
@@ -321,8 +329,9 @@ static void park(void *ctx)
         return;
     }
     frame_stop();
-    if (s.cfg.route_pins) {
+    if (s.routed) {
         route(false);
+        s.routed = false;
     }
 }
 

@@ -13,9 +13,10 @@
 // whole microseconds (17), SPV high, the CKV high time in whole microseconds
 // (15), LCD start.
 //
-// Pins are routed to the peripherals only while a frame runs; between frames
-// every pad is a GPIO output at the idle level of the LCD output (SPV and
-// XSTL high: active low; the rest low). route_pins = false keeps every
+// Pins are routed to the peripherals at the first frame of a refresh and stay
+// routed (as stock) until park() or a failed frame; outside a refresh every
+// pad is a GPIO output at the idle level of the LCD output (SPV and XSTL
+// high: active low; the rest low). route_pins = false keeps every
 // signal inside the chip (stage B1 self-check): the LCD, the DMA and the RMT
 // still run and are timed.
 //
@@ -45,6 +46,8 @@ typedef struct {
     int32_t last_ckv_margin_us; // nominal CKV end (rows + 5 periods) minus the DMA EOF: > 0 = CKV still clocks
     uint32_t last_lead_ns;      // CKV start to LCD start: one CKV period + the CKV high time (32 us)
     uint32_t last_dma_eofs;     // DMA EOF events in the last frame (1)
+    uint32_t last_start_us;     // scan_start entry to LCD start (includes the 17 + 15 us lead)
+    uint32_t last_tail_us;      // VSYNC_END interrupt to scan_wait return
 } epd_s31_bus_stats_t;
 
 // bufs: the two phase buffers (line_bytes x rows each, 64-byte aligned, PSRAM or internal)

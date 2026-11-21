@@ -41,14 +41,24 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         if (start - hv_t0 > budget_us) {
             return finish(o, EPD_RUN_BUDGET, hv_t0, st);
         }
-        if (!o->pg_ok(o->ctx)) {
-            return finish(o, EPD_RUN_PG_DROP, hv_t0, st);
-        }
         if (k && start > slot + phase_us / 4) {
             st->late_phases++;
         }
+        const uint32_t lag = (uint32_t)(start - slot);
+        st->lag_us_max = lag > st->lag_us_max ? lag : st->lag_us_max;
         if (o->scan_start(o->ctx, buf[bi]) != ESP_OK) {
             return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, st);
+        }
+        // While the frame scans: PWR_GOOD (an I2C read is longer than the
+        // slack between two frames of the timeline), then the next phase
+        uint64_t t = o->now_us(o->ctx);
+        const bool pg = o->pg_ok(o->ctx);
+        const uint32_t pg_us = (uint32_t)(o->now_us(o->ctx) - t);
+        st->pg_us_max = pg_us > st->pg_us_max ? pg_us : st->pg_us_max;
+        if (!pg) {
+            const epd_run_result_t r = finish(o, EPD_RUN_PG_DROP, hv_t0, st);    // XOE low, rails off now
+            o->scan_wait(o->ctx);       // then let the undriven frame end
+            return r;
         }
         int next_bi = bi;
         if (k + 1 < phases) {
@@ -64,6 +74,8 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         if (o->scan_wait(o->ctx) != ESP_OK) {
             return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, st);
         }
+        const uint32_t fr = (uint32_t)(o->now_us(o->ctx) - start);
+        st->frame_us_max = fr > st->frame_us_max ? fr : st->frame_us_max;
         st->phases_done = (uint16_t)(k + 1);
         bi = next_bi;
     }

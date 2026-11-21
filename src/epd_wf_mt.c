@@ -3,6 +3,8 @@
 // on, so the halves really run side by side whatever core the caller uses
 // (an unpinned console task on the worker's core serialised them before).
 
+#include "sdkconfig.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -76,8 +78,14 @@ esp_err_t epd_wf_mt_init(int priority)
         return ESP_ERR_NO_MEM;
     }
     for (int c = 0; c < CORES; c++) {
-        if (xTaskCreatePinnedToCore(worker, c ? "epd_wf1" : "epd_wf0", 2048, (void *)(intptr_t)c, priority,
-                                    &s_worker[c], c) != pdPASS) {
+#if CONFIG_SPIRAM && CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
+        // Stack in PSRAM (save internal RAM): the workers only compute, no flash access
+        const UBaseType_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+#else
+        const UBaseType_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+#endif
+        if (xTaskCreatePinnedToCoreWithCaps(worker, c ? "epd_wf1" : "epd_wf0", 2048, (void *)(intptr_t)c, priority,
+                                            &s_worker[c], c, caps) != pdPASS) {
             return ESP_ERR_NO_MEM;
         }
     }
