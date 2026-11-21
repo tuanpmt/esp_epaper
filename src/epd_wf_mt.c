@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
 #include "epd_wf_mt.h"
 
 typedef enum { J_PHASE, J_PHASE2, J_PHASE_PP, J_PHASE2_PP, J_PHASE_TP, J_PAIR_PLANE, J_TRANS_PLANE } kind_t;
@@ -29,6 +30,7 @@ typedef struct {
 static TaskHandle_t s_worker[CORES];
 static job_t s_job[CORES];
 static SemaphoreHandle_t s_done, s_mx;
+static uint32_t s_own_max, s_wait_max;     // caller half / waiting for the other half, us
 
 static void run_job(const job_t *j)
 {
@@ -109,8 +111,13 @@ static void split(job_t j)
     s_job[other].band.h = (int16_t)(j.band.h - top);
     xTaskNotifyGive(s_worker[other]);
     j.band.h = top;
+    const int64_t t0 = esp_timer_get_time();
     run_job(&j);
+    const int64_t t1 = esp_timer_get_time();
     xSemaphoreTake(s_done, portMAX_DELAY);
+    const uint32_t own = (uint32_t)(t1 - t0), wait = (uint32_t)(esp_timer_get_time() - t1);
+    s_own_max = own > s_own_max ? own : s_own_max;
+    s_wait_max = wait > s_wait_max ? wait : s_wait_max;
     xSemaphoreGive(s_mx);
 }
 
@@ -159,4 +166,20 @@ void epd_wf_mt_trans_plane(const uint8_t *cur, const uint8_t *next, size_t plane
                            epd_rect_t band)
 {
     split((job_t){.kind = J_TRANS_PLANE, .cur = cur, .next = next, .tp_out = tp, .ps = plane_stride, .band = band});
+}
+
+void epd_wf_mt_set_priority(int priority)
+{
+    for (int c = 0; c < CORES; c++) {
+        if (s_worker[c]) {
+            vTaskPrioritySet(s_worker[c], (UBaseType_t)priority);
+        }
+    }
+}
+
+void epd_wf_mt_take_stats(uint32_t *own_max_us, uint32_t *wait_max_us)
+{
+    *own_max_us = s_own_max;
+    *wait_max_us = s_wait_max;
+    s_own_max = s_wait_max = 0;
 }

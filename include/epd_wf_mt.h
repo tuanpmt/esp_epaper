@@ -29,6 +29,11 @@ void epd_wf_mt_pair_plane(const uint8_t *cur, const uint8_t *next, size_t plane_
                           epd_rect_t band);
 void epd_wf_mt_trans_plane(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint8_t *tp,
                            epd_rect_t band);
+// Both workers' priority (e.g. raised for the duration of a refresh)
+void epd_wf_mt_set_priority(int priority);
+// Since the last call: slowest caller half, and longest wait for the other
+// core's half after the caller's was done (high = the other core was busy)
+void epd_wf_mt_take_stats(uint32_t *own_max_us, uint32_t *wait_max_us);
 
 #ifdef __cplusplus
 }
