@@ -21,12 +21,12 @@ void epd_wf_pair_lut(const epd_wf_phases_t *w, int phase, uint8_t *lut)
             act[from][to] = (uint8_t)epd_wf_action(w, phase, from, to);
         }
     }
-    uint32_t right[EPD_WF_LEVELS][4];               // [from] -> 16 right-pixel codes << 2, packed
+    uint32_t right[EPD_WF_LEVELS][4];               // [from] -> 16 right-pixel codes (bits 1:0), packed
     for (int from = 0; from < EPD_WF_LEVELS; from++) {
         for (int q = 0; q < 4; q++) {
             uint32_t v = 0;
             for (int k = 0; k < 4; k++) {
-                v |= (uint32_t)(act[from][q * 4 + k] << 2) << (8 * k);   // little-endian byte k
+                v |= (uint32_t)act[from][q * 4 + k] << (8 * k);   // little-endian byte k
             }
             right[from][q] = v;
         }
@@ -36,7 +36,7 @@ void epd_wf_pair_lut(const epd_wf_phases_t *w, int phase, uint8_t *lut)
         const uint8_t *l = act[c >> 4];
         const uint32_t *r = right[c & 15];
         for (int h = 0; h < 16; h++) {
-            const uint32_t base = l[h] * 0x01010101u;
+            const uint32_t base = (uint32_t)(l[h] << 2) * 0x01010101u;    // left pixel: bits 3:2
             *out++ = base | r[0];
             *out++ = base | r[1];
             *out++ = base | r[2];
@@ -53,10 +53,12 @@ bool epd_wf_phase_same(const epd_wf_phases_t *w, int a, int b)
 
 #define PAIR(lut, c, n) ((lut)[((uint32_t)(c) << 8) | (n)])
 
-// One bus byte from two cur and two next plane bytes
+// One bus byte from two cur and two next plane bytes. Vendor S31 order: the
+// first plane byte (pixels 0, 1) goes to the high nibble, so pixel 0 is in
+// bits 7:6 and pixel 3 in bits 1:0 (epdiy_riscv_ve_stub.c LUT4 for the S31).
 static inline uint32_t byte_of(const uint8_t *lut, uint32_t c, uint32_t n)
 {
-    return PAIR(lut, c & 0xFF, n & 0xFF) | (PAIR(lut, (c >> 8) & 0xFF, (n >> 8) & 0xFF) << 4);
+    return (PAIR(lut, c & 0xFF, n & 0xFF) << 4) | PAIR(lut, (c >> 8) & 0xFF, (n >> 8) & 0xFF);
 }
 
 // Hot loop: 32-bit plane loads (8 pixels), one 32-bit bus store per 16 pixels.
@@ -205,7 +207,7 @@ void epd_wf_phase_tables(const epd_wf_phases_t *w, int phase, uint8_t t[4][256])
     for (int i = 0; i < 256; i++) {
         const uint8_t a = (uint8_t)epd_wf_action(w, phase, i >> 4, i & 15);
         for (int k = 0; k < 4; k++) {
-            t[k][i] = (uint8_t)(a << (2 * k));
+            t[k][i] = (uint8_t)(a << (6 - 2 * k));    // pixel k of 4: bits 7:6 first
         }
     }
 }
@@ -247,7 +249,7 @@ void epd_wf_phase_tp(const uint8_t t[4][256], const uint8_t *tp, size_t tp_strid
 }
 
 // Two pair-plane entries (one 32-bit load) -> one bus byte
-#define PP_BYTE(lut, w) ((uint32_t)(lut)[(w) & 0xFFFFu] | ((uint32_t)(lut)[(w) >> 16] << 4))
+#define PP_BYTE(lut, w) (((uint32_t)(lut)[(w) & 0xFFFFu] << 4) | (uint32_t)(lut)[(w) >> 16])
 
 void epd_wf_phase_pp(const uint8_t *lut, const uint16_t *pp, size_t pp_stride, uint8_t *out, size_t out_stride,
                      epd_rect_t band)
@@ -261,7 +263,7 @@ void epd_wf_phase_pp(const uint8_t *lut, const uint16_t *pp, size_t pp_stride, u
         uint8_t *o = out + (size_t)y * out_stride + (size_t)band.x / 4;
         size_t i = 0;
         for (; i < bytes && (((uintptr_t)o & 3) || ((uintptr_t)p & 3)); i++) {
-            *o++ = (uint8_t)(lut[p[0]] | (lut[p[1]] << 4));
+            *o++ = (uint8_t)((lut[p[0]] << 4) | lut[p[1]]);
             p += 2;
         }
         if (!((uintptr_t)p & 3)) {
@@ -277,7 +279,7 @@ void epd_wf_phase_pp(const uint8_t *lut, const uint16_t *pp, size_t pp_stride, u
             o = (uint8_t *)ow;
         }
         for (; i < bytes; i++) {
-            *o++ = (uint8_t)(lut[p[0]] | (lut[p[1]] << 4));
+            *o++ = (uint8_t)((lut[p[0]] << 4) | lut[p[1]]);
             p += 2;
         }
     }
@@ -296,8 +298,8 @@ void epd_wf_phase2_pp(const uint8_t *lut_a, const uint8_t *lut_b, const uint16_t
         uint8_t *ob = out_b + (size_t)y * out_stride + (size_t)band.x / 4;
         size_t i = 0;
         for (; i < bytes && (((uintptr_t)oa & 3) || ((uintptr_t)ob & 3) || ((uintptr_t)p & 3)); i++) {
-            *oa++ = (uint8_t)(lut_a[p[0]] | (lut_a[p[1]] << 4));
-            *ob++ = (uint8_t)(lut_b[p[0]] | (lut_b[p[1]] << 4));
+            *oa++ = (uint8_t)((lut_a[p[0]] << 4) | lut_a[p[1]]);
+            *ob++ = (uint8_t)((lut_b[p[0]] << 4) | lut_b[p[1]]);
             p += 2;
         }
         if (!((uintptr_t)p & 3) && !((uintptr_t)oa & 3) && !((uintptr_t)ob & 3)) {
@@ -317,8 +319,8 @@ void epd_wf_phase2_pp(const uint8_t *lut_a, const uint8_t *lut_b, const uint16_t
             ob = (uint8_t *)wb;
         }
         for (; i < bytes; i++) {
-            *oa++ = (uint8_t)(lut_a[p[0]] | (lut_a[p[1]] << 4));
-            *ob++ = (uint8_t)(lut_b[p[0]] | (lut_b[p[1]] << 4));
+            *oa++ = (uint8_t)((lut_a[p[0]] << 4) | lut_a[p[1]]);
+            *ob++ = (uint8_t)((lut_b[p[0]] << 4) | lut_b[p[1]]);
             p += 2;
         }
     }

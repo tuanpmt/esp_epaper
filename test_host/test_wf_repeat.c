@@ -76,7 +76,7 @@ static run_t refresh(const epd_wf_phases_t *w, epd_wf_rule_t rule, uint8_t *cur,
         epd_wf_phase_data(w, k, rule, d);
         for (int y = 0; y < H; y++) {
             for (int x = 0; x < W; x++) {
-                const int code = (s_buf[bi][y * OS + x / 4] >> (2 * (x % 4))) & 3;
+                const int code = (s_buf[bi][y * OS + x / 4] >> (6 - 2 * (x % 4))) & 3;
                 s_codes[k][y * W + x] = (uint8_t)code;
                 const int f = px(cur, x, y), t = px(tgt, x, y);
                 const bool in = x >= band.x && x < band.x + band.w && y >= band.y && y < band.y + band.h;

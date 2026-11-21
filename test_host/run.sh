@@ -36,6 +36,7 @@ run_test test_par_timing src/epd_par_timing.c test_host/test_par_timing.c
 run_test test_wf_data src/epd_wf.c src/panels/e0470_wf_data.c test_host/test_wf_data.c
 run_test test_wf src/epd_wf.c src/panels/e0470_wf_data.c test_host/test_wf.c
 run_test test_wf_repeat src/epd_wf.c src/panels/e0470_wf_data.c test_host/test_wf_repeat.c
+run_test test_bus_bytes src/epd_wf.c src/panels/e0470_wf_data.c test_host/test_bus_bytes.c
 run_test test_par_run src/epd_par_run.c test_host/test_par_run.c
 
 exit $STATUS

@@ -41,7 +41,7 @@ static void test_wf_pair_lut_matches_action(void)
             for (int n = 0; n < 256; n++) {
                 const int left = epd_wf_action(&s_w, f, c >> 4, n >> 4);
                 const int right = epd_wf_action(&s_w, f, c & 15, n & 15);
-                CHECK(s_lut[(c << 8) | n] == (left | (right << 2)));
+                CHECK(s_lut[(c << 8) | n] == ((left << 2) | right));   // left pixel in the higher bits
             }
         }
     }
@@ -57,13 +57,13 @@ static void test_wf_phase_bit_order(void)
 {
     make_table();
     epd_wf_pair_lut(&s_w, 0, s_lut);    // phase 0: x -> 0 darkens (1)
-    // cur: all white. next: px0 black, px1 white, px2 white, px3 black, px4..7 white
+    // cur: all white. next: px0 black, px6 black, the rest white
     const uint8_t cur[4] = {0xFF, 0xFF, 0xFF, 0xFF};
-    const uint8_t next[4] = {0x0F, 0xF0, 0xFF, 0xFF};
+    const uint8_t next[4] = {0x0F, 0xFF, 0xFF, 0x0F};
     uint8_t out[2] = {0xAA, 0xAA};
     epd_wf_phase(s_lut, cur, next, 4, out, 2, (epd_rect_t){0, 0, 8, 1});
-    CHECK(out[0] == ((1 << 0) | (1 << 6)));   // px0 bits 1:0, px3 bits 7:6
-    CHECK(out[1] == 0x00);
+    CHECK(out[0] == (1 << 6));   // vendor S31 order: px0 in bits 7:6
+    CHECK(out[1] == (1 << 2));   // px6 = px2 of byte 1: bits 3:2
 }
 
 static void test_wf_phase_band_only(void)
@@ -149,7 +149,7 @@ static void ref_phase(const uint8_t *lut, const uint8_t *cur, const uint8_t *nex
         for (int i = 0; i < b.w / 4; i++) {
             const uint8_t *c = cur + (size_t)y * ps + b.x / 2 + 2 * i;
             const uint8_t *n = next + (size_t)y * ps + b.x / 2 + 2 * i;
-            out[(size_t)y * os + b.x / 4 + i] = (uint8_t)(lut[(c[0] << 8) | n[0]] | (lut[(c[1] << 8) | n[1]] << 4));
+            out[(size_t)y * os + b.x / 4 + i] = (uint8_t)((lut[(c[0] << 8) | n[0]] << 4) | lut[(c[1] << 8) | n[1]]);
         }
     }
 }

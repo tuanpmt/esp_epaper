@@ -8,8 +8,9 @@
 //   level 0 = black .. 15 = white
 //
 // Planes: 4 bpp, high nibble = left pixel (epd_quant EPD_Q_GRAY4), one row per
-// gate row. Phase buffers: 2 bpp bus bytes, pixel 0 in bits 1:0 .. pixel 3 in
-// bits 7:6 (the vendor S31 driver's order; confirmed on the panel in stage C2).
+// gate row. Phase buffers: 2 bpp bus bytes, pixel 0 in bits 7:6 .. pixel 3 in
+// bits 1:0: the vendor driver's order on the S31 (epdiy_riscv_ve_stub.c LUT4
+// and epd_pixel_order_selftest; the S3 64K path of epdiy is the reverse).
 //
 // No ESP-IDF dependency: host-tested.
 
@@ -68,7 +69,7 @@ epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid);
 int epd_wf_action(const epd_wf_phases_t *w, int phase, int from, int to);
 
 // 64K table for one phase (lut 4-byte aligned): index (cur_byte << 8) | next_byte, both two 4 bpp
-// pixels (high nibble left); value = 4 bus bits, left pixel in bits 1:0.
+// pixels (high nibble left); value = 4 bus bits, left pixel in bits 3:2.
 void epd_wf_pair_lut(const epd_wf_phases_t *w, int phase, uint8_t *lut);
 // One phase for the panel rectangle band (x and w multiples of 4 pixels):
 // writes only the bus bytes inside the band. Bytes outside it are untouched
