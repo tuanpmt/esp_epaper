@@ -25,5 +25,6 @@ run_test() {
 
 # One line per test binary
 run_test test_smoke test_host/test_smoke.c
+run_test test_sched test_host/test_sched.c src/epd_sched.c
 
 exit $STATUS
