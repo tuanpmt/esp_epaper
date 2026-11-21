@@ -3,6 +3,7 @@
 // main/boards/metalio-e-ink4-plus/bus/tps65185.c and the board file, MIT).
 
 #include <stddef.h>
+#include <string.h>
 #include "epd_tps65185.h"
 
 #define POLL_US 1000u
@@ -377,4 +378,22 @@ esp_err_t epd_tps_reg_write(epd_tps_t *t, uint8_t reg, uint8_t val)
         return ESP_ERR_INVALID_STATE;
     }
     return wr(t, reg, val, false);
+}
+
+esp_err_t epd_tps_snapshot(epd_tps_t *t, uint8_t regs[EPD_TPS_REG_REVID + 1])
+{
+    memset(regs, 0xFF, EPD_TPS_REG_REVID + 1);
+    if (!awake(t)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    for (uint8_t r = 0; r <= EPD_TPS_REG_REVID; r++) {
+        if (r == EPD_TPS_REG_INT1 || r == EPD_TPS_REG_INT2) {
+            continue;   // clear on read: the sequencer reads them before each power-up
+        }
+        const esp_err_t err = rd(t, r, &regs[r]);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+    return ESP_OK;
 }

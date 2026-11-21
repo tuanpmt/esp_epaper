@@ -304,6 +304,37 @@ static void test_tps_budget(void)
     CHECK(epd_tps_hv_budget_ms(0) == 300);
 }
 
+// TPS65185 registers reset in SLEEP: every power-up from SLEEP must write
+// VCOM (and UPSEQ) again, not only the first one
+static void test_tps_vcom_written_after_every_sleep(void)
+{
+    setup();
+    for (int i = 0; i < 3; i++) {
+        const int n = f.n;
+        CHECK(epd_tps_hv_on(&t) == ESP_OK);
+        CHECK(tf_find(&f, TF_WR, EPD_TPS_REG_VCOM1, 0x78, n) >= 0);
+        CHECK(tf_find(&f, TF_WR, EPD_TPS_REG_VCOM2, 0x00, n) >= 0);
+        CHECK(tf_find(&f, TF_WR, EPD_TPS_REG_UPSEQ0, 0xE4, n) >= 0);
+        CHECK(epd_tps_sleep(&t) == ESP_OK);
+    }
+}
+
+// Register dump for the console: every register but INT1/INT2 (clear on read)
+static void test_tps_snapshot(void)
+{
+    setup();
+    uint8_t r[EPD_TPS_REG_REVID + 1];
+    CHECK(epd_tps_snapshot(&t, r) == ESP_ERR_INVALID_STATE);    // asleep: no I2C
+    CHECK(epd_tps_hv_on(&t) == ESP_OK);
+    const int n = f.n;
+    CHECK(epd_tps_snapshot(&t, r) == ESP_OK);
+    CHECK(tf_find(&f, TF_RD, EPD_TPS_REG_INT1, -1, n) < 0);
+    CHECK(tf_find(&f, TF_RD, EPD_TPS_REG_INT2, -1, n) < 0);
+    CHECK(r[EPD_TPS_REG_INT1] == 0xFF && r[EPD_TPS_REG_INT2] == 0xFF);
+    CHECK(r[EPD_TPS_REG_VCOM1] == 0x78 && r[EPD_TPS_REG_VCOM2] == 0x00);
+    CHECK(r[EPD_TPS_REG_UPSEQ0] == 0xE4 && r[EPD_TPS_REG_REVID] == EPD_TPS_REVID);
+}
+
 int main(void)
 {
     test_tps_vcom_encode();
@@ -325,5 +356,7 @@ int main(void)
     test_tps_bus_idle_before_power_up();
     test_tps_pg_wait_covers_slow_ramp();
     test_tps_budget();
+    test_tps_vcom_written_after_every_sleep();
+    test_tps_snapshot();
     TEST_DONE("tps65185");
 }

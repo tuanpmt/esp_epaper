@@ -125,6 +125,9 @@ epd_tps_state_t epd_tps_state(const epd_tps_t *t);
 const epd_tps_stats_t *epd_tps_stats(const epd_tps_t *t);
 // Diagnostics (STANDBY/ON only). Writes refuse ENABLE and VCOM2 bits other than bit 0.
 esp_err_t epd_tps_reg_read(epd_tps_t *t, uint8_t reg, uint8_t *val);
+// Registers 0x00..0x10 for a console dump, read while awake; INT1 and INT2
+// clear on read and are skipped (0xFF there). ESP_ERR_INVALID_STATE asleep.
+esp_err_t epd_tps_snapshot(epd_tps_t *t, uint8_t regs[EPD_TPS_REG_REVID + 1]);
 esp_err_t epd_tps_reg_write(epd_tps_t *t, uint8_t reg, uint8_t val);
 // VCOM register encoding: magnitude in 10 mV steps (VCOM is negative)
 void epd_tps_vcom_encode(uint16_t mv, uint8_t *vcom1, uint8_t *vcom2);
