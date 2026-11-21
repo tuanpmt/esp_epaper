@@ -12,6 +12,7 @@ idf_component_register(
         "src/epd_lvgl.c"
         "src/controllers/ssd1677.c"
         "src/controllers/ssd1677_lut.c"
+        "src/controllers/tps65185.c"
         "src/controllers/ssd16xx.c"
         "src/controllers/gdey0154_lut.c"
         "src/controllers/acep_6color.c"
