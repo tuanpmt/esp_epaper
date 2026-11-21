@@ -266,6 +266,36 @@ static void test_tps_reads_int_before_every_power_up(void)
     CHECK(i1 >= 0 && i2 > i1 && up > i2);
 }
 
+// Device round a2: rails failed with VEE_UV while every bus pin was low. The
+// vendor firmware powers up with SPV and XSTL (both active low) high: the bus
+// goes to its powered-idle levels before WAKEUP and back to all-low in SLEEP.
+static void test_tps_bus_idle_before_power_up(void)
+{
+    setup();
+    CHECK(epd_tps_hv_on(&t) == ESP_OK);
+    const int bus = tf_find(&f, TF_BUS, 1, -1, 0);
+    const int wake = tf_find(&f, TF_LINE, L_WAKE, 1, 0);
+    const int up = tf_find(&f, TF_LINE, L_PWRUP, 1, 0);
+    CHECK(bus >= 0 && bus < wake && wake < up);
+    CHECK(f.bus_powered);
+    CHECK(epd_tps_hv_off(&t) == ESP_OK);
+    CHECK(f.bus_powered);                   // STANDBY between refreshes: idle levels stay
+    CHECK(epd_tps_sleep(&t) == ESP_OK);
+    const int down = tf_find(&f, TF_LINE, L_WAKE, 0, 0);
+    const int rest = tf_find(&f, TF_BUS, 0, -1, down);
+    CHECK(rest > down && !f.bus_powered);   // V3P3 is off in SLEEP: nothing driven high
+}
+
+// The PMIC gives each rail 50 ms (SLVSAQ8G 8.3.2) plus the UPSEQ1 delays; the
+// vendor firmware waits 50 + 200 ms: a slow but healthy ramp must not time out
+static void test_tps_pg_wait_covers_slow_ramp(void)
+{
+    setup();
+    f.pg_rise_us = 220000;
+    CHECK(epd_tps_hv_on(&t) == ESP_OK);
+    CHECK(epd_tps_stats(&t)->fail_count == 0);
+}
+
 static void test_tps_budget(void)
 {
     CHECK(epd_tps_hv_budget_ms(20) == 600);
@@ -292,6 +322,8 @@ int main(void)
     test_tps_temperature();
     test_tps_pg_ok_drop_powers_off();
     test_tps_reads_int_before_every_power_up();
+    test_tps_bus_idle_before_power_up();
+    test_tps_pg_wait_covers_slow_ramp();
     test_tps_budget();
     TEST_DONE("tps65185");
 }

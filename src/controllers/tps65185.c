@@ -150,6 +150,12 @@ static uint32_t ms_since(uint32_t polls)
 // One power-up attempt from SLEEP or STANDBY. The caller powers down on error.
 static esp_err_t try_on(epd_tps_t *t)
 {
+    // Panel lines at their powered idle before anything else: with the
+    // active-low start pulses (SPV, XSTL) held low the VEE charge pump failed
+    // with VEE_UV on the device (plan 3 a2); the vendor firmware holds them high
+    if (t->ops->bus_idle) {
+        t->ops->bus_idle(t->ops->ctx, true);
+    }
     t->ops->oe_low(t->ops->ctx);
     const bool was_standby = t->state == EPD_TPS_STANDBY;
     esp_err_t err = epd_tps_wake(t);
@@ -299,6 +305,9 @@ esp_err_t epd_tps_sleep(epd_tps_t *t)
     const esp_err_t e2 = line(t, EPD_TPS_LINE_WAKEUP, false);
     if (!was_sleep) {
         delay_us(t, EPD_TPS_SLEEP_MS * 1000u);
+    }
+    if (t->ops->bus_idle) {
+        t->ops->bus_idle(t->ops->ctx, false);   // panel 3.3 V is off in SLEEP: drive nothing high
     }
     if (t->state != EPD_TPS_FAILED) {
         t->state = EPD_TPS_SLEEP;

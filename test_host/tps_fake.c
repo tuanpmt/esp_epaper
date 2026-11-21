@@ -110,6 +110,13 @@ static void f_oe(void *ctx)
     rec(f, TF_OE, 0, 0);
 }
 
+static void f_bus(void *ctx, bool powered)
+{
+    tps_fake_t *f = ctx;
+    rec(f, TF_BUS, powered, 0);
+    f->bus_powered = powered;
+}
+
 static void f_delay(void *ctx, uint32_t us)
 {
     tps_fake_t *f = ctx;
@@ -131,7 +138,8 @@ void tf_init(tps_fake_t *f)
     f->pg_reg_good = true;
     f->now_us = 1000000;
     f->ops = (epd_tps_ops_t){.ctx = f, .probe = f_probe, .reg_read = f_read, .reg_write = f_write,
-                             .line_set = f_line, .pg_pin = f_pg, .oe_low = f_oe, .delay_us = f_delay};
+                             .line_set = f_line, .pg_pin = f_pg, .oe_low = f_oe, .delay_us = f_delay,
+                             .bus_idle = f_bus};
 }
 
 int tf_find(const tps_fake_t *f, tf_kind_t k, int a, int b, int from)

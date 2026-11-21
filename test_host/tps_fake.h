@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include "epd_tps65185.h"
 
-typedef enum { TF_PROBE, TF_RD, TF_WR, TF_LINE, TF_PG, TF_OE, TF_DELAY } tf_kind_t;
+typedef enum { TF_PROBE, TF_RD, TF_WR, TF_LINE, TF_PG, TF_OE, TF_DELAY, TF_BUS } tf_kind_t;
 
 typedef struct {
     tf_kind_t k;
@@ -34,6 +34,7 @@ typedef struct {
     bool pg_drop;           // PWR_GOOD pin forced low (fault injection)
     bool int_latched;       // a fault latched INT bits: rails stay off until INT1 and INT2 are read (8.3.8)
     bool int1_read;
+    bool bus_powered;       // last bus_idle(): SPV/XSTL at their powered idle (high)
     epd_tps_ops_t ops;
 } tps_fake_t;
 

@@ -8,6 +8,7 @@
 // driver dependency, so the sequence is host-tested byte for byte.
 //
 // Power-up order (stricter than the vendor firmware and EPDiy):
+//   panel lines at powered idle (SPV, XSTL high), XOE/MODE low
 //   WAKEUP=1, 50 ms, probe, REVID, read INT1/INT2 (clears them; also before
 //   every power-up from STANDBY: a latched fault blocks the rails, SLVSAQ8G 8.3.8)
 //   UPSEQ0/1 and VCOM1/VCOM2 written and read back while in STANDBY
@@ -65,7 +66,7 @@ extern "C" {
 #define EPD_TPS_VCOM_DEFAULT_MV 1200
 
 #define EPD_TPS_WAKE_MS         50      // SLEEP -> STANDBY before I2C
-#define EPD_TPS_PG_TIMEOUT_MS   100     // PWR_GOOD pin after PWRUP
+#define EPD_TPS_PG_TIMEOUT_MS   250     // PWR_GOOD pin after PWRUP: 4 rails x 50 ms (SLVSAQ8G 8.3.2) + UPSEQ1 delays; vendor 50 + 200 ms
 #define EPD_TPS_PGREG_TIMEOUT_MS 50     // PG register after ENABLE
 #define EPD_TPS_OFF_PG_MS       50      // PWR_GOOD low after PWRUP=0
 #define EPD_TPS_OE_LEAD_US      12      // XOE low before the rails go (E0470A14-AF 6.1)
@@ -82,6 +83,11 @@ typedef struct {
     esp_err_t (*line_set)(void *ctx, epd_tps_line_t line, bool level);
     esp_err_t (*pg_pin)(void *ctx, bool *good);
     void (*oe_low)(void *ctx);              // panel XOE and MODE low (GPIO)
+    // Panel control lines at their idle levels: powered = true before the
+    // rails come up (active-low start pulses SPV and XSTL high, everything
+    // else low), false = every line low (chip in SLEEP, panel 3.3 V off).
+    // NULL when the board has no such lines.
+    void (*bus_idle)(void *ctx, bool powered);
     void (*delay_us)(void *ctx, uint32_t us);
 } epd_tps_ops_t;
 
