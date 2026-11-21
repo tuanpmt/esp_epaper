@@ -87,6 +87,14 @@ void epd_wf_phase_pp(const uint8_t *lut, const uint16_t *pp, size_t pp_stride, u
                      epd_rect_t band);
 void epd_wf_phase2_pp(const uint8_t *lut_a, const uint8_t *lut_b, const uint16_t *pp, size_t pp_stride,
                       uint8_t *out_a, uint8_t *out_b, size_t out_stride, epd_rect_t band);
+// Transition plane: one byte per pixel, (from << 4) | to, built once per
+// refresh (tp_stride in bytes = panel width). The phase then needs only four
+// 256-byte tables (one per bus bit pair) that stay in the data cache, instead
+// of the 64K pair LUT.
+void epd_wf_trans_plane(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint8_t *tp, epd_rect_t band);
+void epd_wf_phase_tables(const epd_wf_phases_t *w, int phase, uint8_t t[4][256]);
+void epd_wf_phase_tp(const uint8_t t[4][256], const uint8_t *tp, size_t tp_stride, uint8_t *out, size_t out_stride,
+                     epd_rect_t band);
 // After a successful refresh: cur = next inside the band.
 void epd_wf_commit(uint8_t *cur, const uint8_t *next, size_t plane_stride, epd_rect_t band);
 // Grow a band to whole bus bytes (x and w multiples of 4) inside pan_w x pan_h.

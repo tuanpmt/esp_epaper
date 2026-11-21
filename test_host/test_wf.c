@@ -235,6 +235,31 @@ static void test_wf_pair_plane_kernel_matches(void)
     }
 }
 
+static uint8_t r_tp[RW * RH];
+static uint8_t s_tabs[4][256];
+
+static void test_wf_trans_plane_kernel_matches(void)
+{
+    const epd_wf_phases_t *gc = &EPD_WF_E0470.ranges[0].w[EPD_WF_GC16];
+    epd_wf_pair_lut(gc, 20, s_lut);
+    epd_wf_phase_tables(gc, 20, s_tabs);
+    const epd_rect_t bands[] = {{0, 0, RW, RH}, {4, 1, 1204, 5}, {8, 2, 20, 3}, {12, 0, 4, 2}, {1212, 3, 4, 4},
+                                {28, 5, 1000, 9}};
+    for (size_t k = 0; k < sizeof(bands) / sizeof(bands[0]); k++) {
+        memset(r_tp, 0xEE, sizeof(r_tp));
+        epd_wf_trans_plane(r_cur, r_next, RPS, r_tp, bands[k]);
+        memset(r_a, 0x5A, sizeof(r_a));
+        memset(r_b, 0x5A, sizeof(r_b));
+        epd_wf_phase_tp(s_tabs, r_tp, RW, r_a, ROS, bands[k]);
+        ref_phase(s_lut, r_cur, r_next, RPS, r_b, ROS, bands[k]);
+        CHECK(memcmp(r_a, r_b, sizeof(r_a)) == 0);
+    }
+    // pixel 0 of a row: high nibble of cur byte 0 -> high nibble of tp byte 0
+    epd_wf_trans_plane(r_cur, r_next, RPS, r_tp, bands[0]);
+    CHECK(r_tp[0] == (uint8_t)((r_cur[0] & 0xF0) | (r_next[0] >> 4)));
+    CHECK(r_tp[1] == (uint8_t)(((r_cur[0] & 0x0F) << 4) | (r_next[0] & 0x0F)));
+}
+
 int main(void)
 {
     test_wf_pair_lut_matches_action();
@@ -248,5 +273,6 @@ int main(void)
     test_wf_phase2_matches_two_calls();
     test_wf_phase_same();
     test_wf_pair_plane_kernel_matches();
+    test_wf_trans_plane_kernel_matches();
     TEST_DONE("wf");
 }

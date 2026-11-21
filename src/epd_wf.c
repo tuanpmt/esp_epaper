@@ -162,8 +162,86 @@ void epd_wf_pair_plane(const uint8_t *cur, const uint8_t *next, size_t plane_str
         const uint8_t *c = cur + off;
         const uint8_t *n = next + off;
         uint16_t *p = pp + off;
-        for (size_t i = 0; i < bytes; i++) {
+        size_t i = 0;
+        for (; i < bytes && (((uintptr_t)c & 3) || ((uintptr_t)n & 3) || ((uintptr_t)p & 7)); i++) {
             p[i] = (uint16_t)((c[i] << 8) | n[i]);
+        }
+        if (!((uintptr_t)(c + i) & 3) && !((uintptr_t)(n + i) & 3) && !((uintptr_t)(p + i) & 7)) {
+            const uint32_t *cw = (const uint32_t *)(const void *)(c + i);
+            const uint32_t *nw = (const uint32_t *)(const void *)(n + i);
+            uint32_t *pw = (uint32_t *)(void *)(p + i);
+            for (; i + 4 <= bytes; i += 4) {
+                const uint32_t cv = *cw++, nv = *nw++;
+                *pw++ = ((cv & 0xFFu) << 8) | (nv & 0xFFu) | ((cv & 0xFF00u) << 16) | ((nv & 0xFF00u) << 8);
+                *pw++ = ((cv >> 8) & 0xFF00u) | ((nv >> 16) & 0xFFu) | (cv & 0xFF000000u) | ((nv >> 8) & 0xFF0000u);
+            }
+        }
+        for (; i < bytes; i++) {
+            p[i] = (uint16_t)((c[i] << 8) | n[i]);
+        }
+    }
+}
+
+void epd_wf_trans_plane(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint8_t *tp, epd_rect_t band)
+{
+    if (band.w <= 0 || band.h <= 0) {
+        return;
+    }
+    const size_t bytes = (size_t)band.w / 2;
+    for (int y = band.y; y < band.y + band.h; y++) {
+        const size_t off = (size_t)y * plane_stride + (size_t)band.x / 2;
+        const uint8_t *c = cur + off;
+        const uint8_t *n = next + off;
+        uint8_t *t = tp + (size_t)y * plane_stride * 2 + (size_t)band.x;
+        for (size_t i = 0; i < bytes; i++) {
+            t[2 * i] = (uint8_t)((c[i] & 0xF0) | (n[i] >> 4));
+            t[2 * i + 1] = (uint8_t)(((c[i] & 0x0F) << 4) | (n[i] & 0x0F));
+        }
+    }
+}
+
+void epd_wf_phase_tables(const epd_wf_phases_t *w, int phase, uint8_t t[4][256])
+{
+    for (int i = 0; i < 256; i++) {
+        const uint8_t a = (uint8_t)epd_wf_action(w, phase, i >> 4, i & 15);
+        for (int k = 0; k < 4; k++) {
+            t[k][i] = (uint8_t)(a << (2 * k));
+        }
+    }
+}
+
+void epd_wf_phase_tp(const uint8_t t[4][256], const uint8_t *tp, size_t tp_stride, uint8_t *out, size_t out_stride,
+                     epd_rect_t band)
+{
+    if (band.w <= 0 || band.h <= 0) {
+        return;
+    }
+    const uint8_t *t0 = t[0], *t1 = t[1], *t2 = t[2], *t3 = t[3];
+    const size_t bytes = (size_t)band.w / 4;
+    for (int y = band.y; y < band.y + band.h; y++) {
+        const uint8_t *p = tp + (size_t)y * tp_stride + (size_t)band.x;
+        uint8_t *o = out + (size_t)y * out_stride + (size_t)band.x / 4;
+        size_t i = 0;
+        for (; i < bytes && (((uintptr_t)p & 3) || ((uintptr_t)o & 3)); i++, p += 4) {
+            *o++ = (uint8_t)(t0[p[0]] | t1[p[1]] | t2[p[2]] | t3[p[3]]);
+        }
+        if (!((uintptr_t)p & 3) && !((uintptr_t)o & 3)) {
+            const uint32_t *pw = (const uint32_t *)(const void *)p;
+            uint32_t *ow = (uint32_t *)(void *)o;
+            for (; i + 4 <= bytes; i += 4) {
+                uint32_t r = 0;
+                for (int k = 0; k < 4; k++) {
+                    const uint32_t v = pw[k];
+                    r |= (uint32_t)(t0[v & 0xFF] | t1[(v >> 8) & 0xFF] | t2[(v >> 16) & 0xFF] | t3[v >> 24]) << (8 * k);
+                }
+                pw += 4;
+                *ow++ = r;
+            }
+            p = (const uint8_t *)pw;
+            o = (uint8_t *)ow;
+        }
+        for (; i < bytes; i++, p += 4) {
+            *o++ = (uint8_t)(t0[p[0]] | t1[p[1]] | t2[p[2]] | t3[p[3]]);
         }
     }
 }
