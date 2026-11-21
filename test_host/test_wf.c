@@ -129,14 +129,15 @@ static void test_wf_pick_nearest_range(void)
 
 static void test_wf_gating_cold(void)
 {
-    CHECK(epd_wf_kind_for(EPD_M_FAST, 25, true) == EPD_WF_DU_SHORT);
+    // stock profile 0 "Clear" (epd_refresh.cc:227-229): every DU refresh uses DU 20
+    CHECK(epd_wf_kind_for(EPD_M_FAST, 25, true) == EPD_WF_DU);
     CHECK(epd_wf_kind_for(EPD_M_PARTIAL, 25, true) == EPD_WF_DU);
     CHECK(epd_wf_kind_for(EPD_M_GRAY, 25, true) == EPD_WF_GL16);
     CHECK(epd_wf_kind_for(EPD_M_FULL_CLEAN, 25, true) == EPD_WF_GC16);
     CHECK(epd_wf_kind_for(EPD_M_FAST, 4, true) == EPD_WF_GC16);
     CHECK(epd_wf_kind_for(EPD_M_PARTIAL, 46, true) == EPD_WF_GC16);
-    CHECK(epd_wf_kind_for(EPD_M_FAST, 5, true) == EPD_WF_DU_SHORT);
-    CHECK(epd_wf_kind_for(EPD_M_FAST, -40, false) == EPD_WF_DU_SHORT);   // no reading: 25 C
+    CHECK(epd_wf_kind_for(EPD_M_FAST, 5, true) == EPD_WF_DU);
+    CHECK(epd_wf_kind_for(EPD_M_FAST, -40, false) == EPD_WF_DU);   // no reading: 25 C, as stock always
     CHECK(epd_wf_kind_for(EPD_M_GRAY, 2, true) == EPD_WF_GL16);
 }
 

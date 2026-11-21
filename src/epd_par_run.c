@@ -12,7 +12,7 @@ static epd_run_result_t finish(const epd_par_run_ops_t *o, epd_run_result_t r, u
     return r;
 }
 
-epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32_t phase_us,
+epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32_t phase_hz,
                              uint32_t budget_ms, uint8_t *const buf[2], epd_par_run_stats_t *st)
 {
     memset(st, 0, sizeof(*st));
@@ -26,11 +26,18 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         o->compute(o->ctx, 0, buf[0]);
     }
     st->compute_max_us = (uint32_t)(o->now_us(o->ctx) - c0);
-    uint64_t slot = o->now_us(o->ctx);
+    const uint32_t phase_us = 1000000u / phase_hz;
+    uint64_t origin = o->now_us(o->ctx);
     int bi = 0;     // buffer holding phase k
     for (uint16_t k = 0; k < phases; k++) {
-        o->wait_until_us(o->ctx, slot);         // never faster than the phase rate
+        // one timeline from phase 0: never faster than the phase rate, and a
+        // late phase does not move the later targets
+        const uint64_t slot = origin + ((uint64_t)k * 1000000u + phase_hz - 1u) / phase_hz;
+        o->wait_until_us(o->ctx, slot);
         const uint64_t start = o->now_us(o->ctx);
+        if (k == 0) {
+            origin = start;
+        }
         if (start - hv_t0 > budget_us) {
             return finish(o, EPD_RUN_BUDGET, hv_t0, st);
         }
@@ -40,7 +47,6 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         if (k && start > slot + phase_us / 4) {
             st->late_phases++;
         }
-        slot = start + phase_us;
         if (o->scan_start(o->ctx, buf[bi]) != ESP_OK) {
             return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, st);
         }

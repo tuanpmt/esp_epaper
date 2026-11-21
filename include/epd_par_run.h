@@ -47,7 +47,10 @@ typedef struct {
     uint16_t reused;            // phases that rescanned the previous buffer
 } epd_par_run_stats_t;
 
-epd_run_result_t epd_par_run(const epd_par_run_ops_t *ops, uint16_t phases, uint32_t phase_us,
+// Phase k starts no earlier than origin + ceil(k * 1e6 / phase_hz), origin =
+// the start of phase 0: one fixed timeline, a late phase does not move the
+// later targets (as the vendor firmware, render_lcd.c:240-243).
+epd_run_result_t epd_par_run(const epd_par_run_ops_t *ops, uint16_t phases, uint32_t phase_hz,
                              uint32_t budget_ms, uint8_t *const buf[2], epd_par_run_stats_t *st);
 
 #ifdef __cplusplus

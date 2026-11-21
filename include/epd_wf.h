@@ -60,8 +60,10 @@ extern const epd_wf_set_t EPD_WF_E0470;
 
 // The range that holds temp_c, else the nearest one. NULL: no table of that kind.
 const epd_wf_phases_t *epd_wf_pick(const epd_wf_set_t *s, epd_wf_kind_t k, int temp_c);
-// Refresh mode -> table: FAST -> DU_SHORT, PARTIAL -> DU, GRAY -> GL16,
-// FULL_CLEAN -> GC16; FAST and PARTIAL become GC16 outside 5..45 C.
+// Refresh mode -> table, as the vendor firmware's default profile 0 "Clear"
+// (epd_refresh.cc:197-229): FAST and PARTIAL -> DU (20), GRAY -> GL16 (48),
+// FULL_CLEAN -> GC16 (48). FAST and PARTIAL become GC16 outside 5..45 C; the
+// vendor firmware always passes 25 C, and so does the Plus backend for now.
 epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid);
 int epd_wf_action(const epd_wf_phases_t *w, int phase, int from, int to);
 
