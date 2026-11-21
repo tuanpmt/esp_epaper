@@ -134,5 +134,5 @@ sdkconfig
 sdkconfig.old
 managed_components/
 ref/
-dist/build_host/
+dist/
 build_host/
