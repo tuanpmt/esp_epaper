@@ -4,6 +4,7 @@ idf_component_register(
         "src/epaper_spi.c"
         "src/epaper_common.c"
         "src/epaper_registry.c"
+        "src/epd_dirty.c"
         "src/controllers/ssd16xx.c"
         "src/controllers/gdey0154_lut.c"
         "src/controllers/acep_6color.c"
