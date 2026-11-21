@@ -22,7 +22,6 @@ typedef enum {
     EPD_PANEL_GDEY0154D67 = 0,  // 1.54" BW 200x200 (custom LUT for better partial)
     EPD_PANEL_GDEP073E01,       // 7.3" 6-Color 800x480
     EPD_PANEL_GDEY037F51,       // 3.7" 4-Color BWRY 240x416
-    EPD_PANEL_GDEY029T71H,      // 2.9" BW 168x384 (SSD1685, sources S8..S175)
 
     // Generic SSD16xx BW panels (same driver, different sizes)
     EPD_PANEL_SSD16XX_154,      // 1.54" BW 200x200 (generic, no custom LUT)
@@ -32,6 +31,9 @@ typedef enum {
     EPD_PANEL_SSD16XX_290,      // 2.9" BW 128x296 (GDEY029T94, etc.)
     EPD_PANEL_SSD16XX_370,      // 3.7" BW 280x480 (GDEY037T03, etc.)
     EPD_PANEL_SSD16XX_420,      // 4.2" BW 400x300 (GDEY042T81, etc.)
+
+    // Added after the generic panels to keep existing enum values stable
+    EPD_PANEL_GDEY029T71H,      // 2.9" BW 168x384 (SSD1685, sources S8..S175)
 
     EPD_PANEL_COUNT,            // Must be BEFORE aliases!
 

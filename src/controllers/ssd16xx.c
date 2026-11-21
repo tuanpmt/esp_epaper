@@ -88,11 +88,14 @@ static esp_err_t ssd16xx_update_full(epd_device_t *dev)
     epd_spi_t *spi = epd_get_spi(dev);
     const epd_panel_desc_t *panel = epd_get_panel(dev);
 
-    // Display update control: bypass RED as 0. GxEPD2 writes this before every full
-    // update. The fast variant additionally overrides the temperature register.
-    CMD(spi, 0x21);
-    DATA(spi, 0x40);
-    DATA(spi, 0x00);
+    // SSD1685 (GDEY029T71H): bypass RED as 0 before every full update, as GxEPD2
+    // does. Only for those panels: on SSD1680/1681 this setting would persist into
+    // the following partial updates and break the old/new RAM comparison.
+    if (panel->ssd1685_partial) {
+        CMD(spi, 0x21);
+        DATA(spi, 0x40);
+        DATA(spi, 0x00);
+    }
 
     if (panel->fast_full_update) {
         CMD(spi, 0x1A);  // Write temperature register
