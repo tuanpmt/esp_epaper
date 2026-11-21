@@ -1,5 +1,14 @@
+set(EPD_TARGET_SRCS "")
+set(EPD_TARGET_PRIV "")
+if(IDF_TARGET STREQUAL "esp32s31")
+    # parallel panel scan bus (LCD_CAM + RMT), ESP32-S31 only
+    list(APPEND EPD_TARGET_SRCS "src/bus/epd_par_bus_s31.c")
+    list(APPEND EPD_TARGET_PRIV esp_driver_rmt esp_driver_dma esp_hal_lcd esp_hal_i2s esp_mm esp_hw_support esp_hal_gpio)
+endif()
+
 idf_component_register(
     SRCS
+        ${EPD_TARGET_SRCS}
         "src/epaper.c"
         "src/epaper_spi.c"
         "src/epd_bus_spi.c"
@@ -30,6 +39,7 @@ idf_component_register(
         esp_timer
         lvgl
     PRIV_REQUIRES
+        ${EPD_TARGET_PRIV}
         esp_psram
         log
 )
