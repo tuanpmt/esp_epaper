@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `epd_ssd1677`: `epd_ssd1677_partial_timing()` / `epd_ssd1677_set_partial_timing()` patch only the TP/RP and frame rate bytes of the stock partial LUT for on-device tuning; timing may only get shorter than stock, VS rows and voltages never change.
+
 ## 3.0.0
 
 Breaking: the LVGL 9 RGB565 glue (`epaper_lvgl.c/.h`) is removed and replaced by a new pipeline. The v2 core API and panel drivers (SSD16xx, GDEY0154D67 4-gray, ACeP, BWRY) still build.

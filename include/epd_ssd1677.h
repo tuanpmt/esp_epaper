@@ -48,6 +48,24 @@ esp_err_t epd_ssd1677_temperature(epd_ssd1677_t *c, int8_t *deg_c);
 esp_err_t epd_ssd1677_deep_sleep(epd_ssd1677_t *c);   // 0x10 0x01: power off only; leaving it needs a reset
 esp_err_t epd_ssd1677_reinit(epd_ssd1677_t *c);       // after a BUSY timeout: reset + init
 
+// Partial LUT timing, for on-device tuning. In the 105-byte 0x32 table the
+// timing lives in bytes 50..99 (10 groups x TP A, B, C, D, RP) and 100..104
+// (frame rate, one nibble per group). The VS phase rows (bytes 0..49) and the
+// voltages (0x03, 0x04, 0x2C) always stay stock.
+typedef struct {
+    uint8_t tp[10][4];  // groups 0..9: frames of phases A..D
+    uint8_t rp[10];     // groups 0..9: repeat count
+    uint8_t fr[5];      // frame rate bytes
+} epd_ssd1677_timing_t;
+
+// Current partial LUT timing.
+void epd_ssd1677_partial_timing(const epd_ssd1677_t *c, epd_ssd1677_timing_t *out);
+// Copy the stock partial table and patch only its timing bytes; the next
+// partial/fast start loads it. NULL restores stock. Safety boundary: every TP
+// and RP must be <= the stock value (shorter only), else ESP_ERR_INVALID_ARG
+// and the current timing stays. Frame rate bytes are free. Kept across reinit.
+esp_err_t epd_ssd1677_set_partial_timing(epd_ssd1677_t *c, const epd_ssd1677_timing_t *t);
+
 #ifdef __cplusplus
 }
 #endif
