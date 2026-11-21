@@ -65,7 +65,7 @@ const epd_wf_phases_t *epd_wf_pick(const epd_wf_set_t *s, epd_wf_kind_t k, int t
 epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid);
 int epd_wf_action(const epd_wf_phases_t *w, int phase, int from, int to);
 
-// 64K table for one phase: index (cur_byte << 8) | next_byte, both two 4 bpp
+// 64K table for one phase (lut 4-byte aligned): index (cur_byte << 8) | next_byte, both two 4 bpp
 // pixels (high nibble left); value = 4 bus bits, left pixel in bits 1:0.
 void epd_wf_pair_lut(const epd_wf_phases_t *w, int phase, uint8_t *lut);
 // One phase for the panel rectangle band (x and w multiples of 4 pixels):
@@ -73,6 +73,20 @@ void epd_wf_pair_lut(const epd_wf_phases_t *w, int phase, uint8_t *lut);
 // (the caller zeroes the buffer once per refresh, so they never drive).
 void epd_wf_phase(const uint8_t *lut, const uint8_t *cur, const uint8_t *next, size_t plane_stride,
                   uint8_t *out, size_t out_stride, epd_rect_t band);
+// Two phases in one pass over the planes (half the plane reads per phase)
+void epd_wf_phase2(const uint8_t *lut_a, const uint8_t *lut_b, const uint8_t *cur, const uint8_t *next,
+                   size_t plane_stride, uint8_t *out_a, uint8_t *out_b, size_t out_stride, epd_rect_t band);
+// Phases a and b drive every transition the same way (same LUT, same bus bytes)
+bool epd_wf_phase_same(const epd_wf_phases_t *w, int a, int b);
+// Pair plane: one uint16 per plane byte, (cur << 8) | next, so each pair-LUT
+// index is a plain 16-bit field. Built once per refresh for the band;
+// pp_stride is in uint16 elements (= plane_stride). Then the phase kernels
+// read one stream instead of two and do no index arithmetic.
+void epd_wf_pair_plane(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint16_t *pp, epd_rect_t band);
+void epd_wf_phase_pp(const uint8_t *lut, const uint16_t *pp, size_t pp_stride, uint8_t *out, size_t out_stride,
+                     epd_rect_t band);
+void epd_wf_phase2_pp(const uint8_t *lut_a, const uint8_t *lut_b, const uint16_t *pp, size_t pp_stride,
+                      uint8_t *out_a, uint8_t *out_b, size_t out_stride, epd_rect_t band);
 // After a successful refresh: cur = next inside the band.
 void epd_wf_commit(uint8_t *cur, const uint8_t *next, size_t plane_stride, epd_rect_t band);
 // Grow a band to whole bus bytes (x and w multiples of 4) inside pan_w x pan_h.

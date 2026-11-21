@@ -21,7 +21,9 @@ typedef struct {
     esp_err_t (*hv_on)(void *ctx);
     esp_err_t (*hv_off)(void *ctx);
     bool (*pg_ok)(void *ctx);
-    void (*compute)(void *ctx, int phase, uint8_t *buf);
+    // Fills one 2 bpp phase buffer; returns false instead when the phase drives
+    // exactly like the previous one (buf untouched: the previous buffer is scanned again)
+    bool (*compute)(void *ctx, int phase, uint8_t *buf);
     esp_err_t (*scan_start)(void *ctx, const uint8_t *buf);
     esp_err_t (*scan_wait)(void *ctx);
     uint64_t (*now_us)(void *ctx);
@@ -42,6 +44,7 @@ typedef struct {
     uint32_t hv_us;             // rails on to rails off
     uint32_t compute_max_us;    // slowest phase computation
     uint32_t late_phases;       // phases that started > phase_us / 4 after their slot
+    uint16_t reused;            // phases that rescanned the previous buffer
 } epd_par_run_stats_t;
 
 epd_run_result_t epd_par_run(const epd_par_run_ops_t *ops, uint16_t phases, uint32_t phase_us,

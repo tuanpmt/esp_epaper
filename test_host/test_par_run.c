@@ -11,6 +11,7 @@ typedef struct {
     int scan_fail_at;   // scan_wait fails for this phase, -1 never
     bool hv_fail;
     int pg_checks, scans, hv_offs, hv_ons;
+    unsigned reuse_mask;    // compute(phase) reports "same as the previous phase" for these phases
     const uint8_t *scanned[64];
     uint64_t scan_t[64];
     uint8_t *computed[64];
@@ -31,14 +32,20 @@ static bool f_pg(void *c)
     lg(f, ok ? "P " : "p ");
     return ok;
 }
-static void f_compute(void *c, int phase, uint8_t *buf)
+static bool f_compute(void *c, int phase, uint8_t *buf)
 {
     fk_t *f = c;
     char s[16];
+    if (f->reuse_mask & (1u << phase)) {
+        snprintf(s, sizeof(s), "R%d ", phase);
+        lg(f, s);
+        return false;
+    }
     snprintf(s, sizeof(s), "C%d ", phase);
     lg(f, s);
     f->computed[phase] = buf;
     f->now += f->compute_us;
+    return true;
 }
 static esp_err_t f_scan_start(void *c, const uint8_t *buf)
 {
@@ -160,6 +167,19 @@ static void test_run_hv_fail_no_scan(void)
     CHECK(!st.unknown);
 }
 
+// A phase identical to the previous one scans the previous buffer again
+static void test_run_reuses_identical_phase(void)
+{
+    setup();
+    f.reuse_mask = (1u << 1) | (1u << 2);   // phases 1 and 2 repeat phase 0
+    epd_par_run_stats_t st;
+    CHECK(epd_par_run(&ops, 4, 11764, 1000, bufs, &st) == EPD_RUN_OK);
+    CHECK(strcmp(f.log, "ON C0 P S0 R1 W P S1 R2 W P S2 C3 W P S3 W OFF ") == 0);
+    CHECK(f.scanned[0] == b0 && f.scanned[1] == b0 && f.scanned[2] == b0);
+    CHECK(f.computed[3] == b1 && f.scanned[3] == b1);   // never the buffer being scanned
+    CHECK(st.reused == 2);
+}
+
 int main(void)
 {
     test_run_order_double_buffer();
@@ -168,5 +188,6 @@ int main(void)
     test_run_scan_error_marks_unknown();
     test_run_budget_exceeded_aborts();
     test_run_hv_fail_no_scan();
+    test_run_reuses_identical_phase();
     TEST_DONE("par_run");
 }

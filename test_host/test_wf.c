@@ -140,6 +140,101 @@ static void test_wf_gating_cold(void)
     CHECK(epd_wf_kind_for(EPD_M_GRAY, 2, true) == EPD_WF_GL16);
 }
 
+// Reference: one bus byte at a time (the first, plain implementation)
+static void ref_phase(const uint8_t *lut, const uint8_t *cur, const uint8_t *next, size_t ps, uint8_t *out, size_t os,
+                      epd_rect_t b)
+{
+    for (int y = b.y; y < b.y + b.h; y++) {
+        for (int i = 0; i < b.w / 4; i++) {
+            const uint8_t *c = cur + (size_t)y * ps + b.x / 2 + 2 * i;
+            const uint8_t *n = next + (size_t)y * ps + b.x / 2 + 2 * i;
+            out[(size_t)y * os + b.x / 4 + i] = (uint8_t)(lut[(c[0] << 8) | n[0]] | (lut[(c[1] << 8) | n[1]] << 4));
+        }
+    }
+}
+
+enum { RW = 1216, RH = 24, RPS = RW / 2, ROS = RW / 4 };
+static uint8_t r_cur[RPS * RH], r_next[RPS * RH], r_a[ROS * RH], r_b[ROS * RH], r_c[ROS * RH];
+static uint8_t s_lut2[EPD_WF_PAIR_LUT_SIZE];
+
+static void test_wf_phase_words_match_bytes(void)
+{
+    srand(7);
+    for (size_t i = 0; i < sizeof(r_cur); i++) {
+        r_cur[i] = (uint8_t)rand();
+        r_next[i] = (uint8_t)rand();
+    }
+    const epd_wf_phases_t *gc = &EPD_WF_E0470.ranges[0].w[EPD_WF_GC16];
+    epd_wf_pair_lut(gc, 20, s_lut);
+    // every head/tail alignment of the 32-bit loop, plus full rows
+    const epd_rect_t bands[] = {{0, 0, RW, RH}, {4, 1, 1204, 5}, {8, 2, 20, 3}, {12, 0, 4, 2}, {1212, 3, 4, 4},
+                                {28, 5, 1000, 9}, {0, 0, 8, 1}};
+    for (size_t k = 0; k < sizeof(bands) / sizeof(bands[0]); k++) {
+        memset(r_a, 0x5A, sizeof(r_a));
+        memset(r_b, 0x5A, sizeof(r_b));
+        epd_wf_phase(s_lut, r_cur, r_next, RPS, r_a, ROS, bands[k]);
+        ref_phase(s_lut, r_cur, r_next, RPS, r_b, ROS, bands[k]);
+        CHECK(memcmp(r_a, r_b, sizeof(r_a)) == 0);
+    }
+}
+
+static void test_wf_phase2_matches_two_calls(void)
+{
+    const epd_wf_phases_t *gc = &EPD_WF_E0470.ranges[0].w[EPD_WF_GC16];
+    epd_wf_pair_lut(gc, 10, s_lut);
+    epd_wf_pair_lut(gc, 11, s_lut2);
+    const epd_rect_t b = {4, 2, 1208, 20};
+    memset(r_a, 0, sizeof(r_a));
+    memset(r_b, 0, sizeof(r_b));
+    memset(r_c, 0, sizeof(r_c));
+    epd_wf_phase2(s_lut, s_lut2, r_cur, r_next, RPS, r_a, r_b, ROS, b);
+    ref_phase(s_lut, r_cur, r_next, RPS, r_c, ROS, b);
+    CHECK(memcmp(r_a, r_c, sizeof(r_a)) == 0);
+    memset(r_c, 0, sizeof(r_c));
+    ref_phase(s_lut2, r_cur, r_next, RPS, r_c, ROS, b);
+    CHECK(memcmp(r_b, r_c, sizeof(r_b)) == 0);
+}
+
+static void test_wf_phase_same(void)
+{
+    for (int k = 0; k < EPD_WF_COUNT; k++) {
+        const epd_wf_phases_t *w = &EPD_WF_E0470.ranges[0].w[k];
+        for (int f = 1; f < w->phases; f++) {
+            const bool same = memcmp(w->lut + (size_t)f * 64, w->lut + (size_t)(f - 1) * 64, 64) == 0;
+            CHECK(epd_wf_phase_same(w, f, f - 1) == same);
+        }
+    }
+    const epd_wf_phases_t *du = &EPD_WF_E0470.ranges[0].w[EPD_WF_DU_FAST];
+    CHECK(epd_wf_phase_same(du, 1, 0));     // DU fast repeats its first phase
+}
+
+static uint16_t r_pp[RPS * RH];
+
+static void test_wf_pair_plane_kernel_matches(void)
+{
+    const epd_wf_phases_t *gc = &EPD_WF_E0470.ranges[0].w[EPD_WF_GC16];
+    epd_wf_pair_lut(gc, 20, s_lut);
+    epd_wf_pair_lut(gc, 21, s_lut2);
+    const epd_rect_t bands[] = {{0, 0, RW, RH}, {4, 1, 1204, 5}, {8, 2, 20, 3}, {12, 0, 4, 2}, {1212, 3, 4, 4},
+                                {28, 5, 1000, 9}};
+    for (size_t k = 0; k < sizeof(bands) / sizeof(bands[0]); k++) {
+        memset(r_pp, 0xEE, sizeof(r_pp));
+        epd_wf_pair_plane(r_cur, r_next, RPS, r_pp, bands[k]);
+        memset(r_a, 0x5A, sizeof(r_a));
+        memset(r_b, 0x5A, sizeof(r_b));
+        epd_wf_phase_pp(s_lut, r_pp, RPS, r_a, ROS, bands[k]);
+        ref_phase(s_lut, r_cur, r_next, RPS, r_b, ROS, bands[k]);
+        CHECK(memcmp(r_a, r_b, sizeof(r_a)) == 0);
+        memset(r_a, 0x5A, sizeof(r_a));
+        memset(r_c, 0x5A, sizeof(r_c));
+        epd_wf_phase2_pp(s_lut, s_lut2, r_pp, RPS, r_a, r_c, ROS, bands[k]);
+        CHECK(memcmp(r_a, r_b, sizeof(r_a)) == 0);
+        memset(r_b, 0x5A, sizeof(r_b));
+        ref_phase(s_lut2, r_cur, r_next, RPS, r_b, ROS, bands[k]);
+        CHECK(memcmp(r_c, r_b, sizeof(r_c)) == 0);
+    }
+}
+
 int main(void)
 {
     test_wf_pair_lut_matches_action();
@@ -149,5 +244,9 @@ int main(void)
     test_wf_band_align();
     test_wf_pick_nearest_range();
     test_wf_gating_cold();
+    test_wf_phase_words_match_bytes();
+    test_wf_phase2_matches_two_calls();
+    test_wf_phase_same();
+    test_wf_pair_plane_kernel_matches();
     TEST_DONE("wf");
 }

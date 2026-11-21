@@ -27,6 +27,7 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
     }
     st->compute_max_us = (uint32_t)(o->now_us(o->ctx) - c0);
     uint64_t slot = o->now_us(o->ctx);
+    int bi = 0;     // buffer holding phase k
     for (uint16_t k = 0; k < phases; k++) {
         o->wait_until_us(o->ctx, slot);         // never faster than the phase rate
         const uint64_t start = o->now_us(o->ctx);
@@ -40,12 +41,17 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
             st->late_phases++;
         }
         slot = start + phase_us;
-        if (o->scan_start(o->ctx, buf[k & 1]) != ESP_OK) {
+        if (o->scan_start(o->ctx, buf[bi]) != ESP_OK) {
             return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, st);
         }
+        int next_bi = bi;
         if (k + 1 < phases) {
             c0 = o->now_us(o->ctx);
-            o->compute(o->ctx, k + 1, buf[(k + 1) & 1]);
+            if (o->compute(o->ctx, k + 1, buf[bi ^ 1])) {
+                next_bi = bi ^ 1;   // never the buffer the bus is reading
+            } else {
+                st->reused++;
+            }
             const uint32_t c = (uint32_t)(o->now_us(o->ctx) - c0);
             st->compute_max_us = c > st->compute_max_us ? c : st->compute_max_us;
         }
@@ -53,6 +59,7 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
             return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, st);
         }
         st->phases_done = (uint16_t)(k + 1);
+        bi = next_bi;
     }
     return finish(o, EPD_RUN_OK, hv_t0, st);
 }
