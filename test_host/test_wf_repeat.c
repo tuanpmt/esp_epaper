@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "check.h"
+#include "epd_quant.h"
 #include "epd_wf.h"
 
 enum { W = 256, H = 32, PS = W / 2, OS = W / 4, MAXPH = 64 };
@@ -324,6 +325,53 @@ static void test_hist_and_box(void)
     CHECK(h[15] == 40u * H);
 }
 
+
+// The recab path (LVGL L8 -> epd_quant GRAY4 -> plane -> job -> bus codes)
+// against the hwtest probe convention (level 15 = white, written directly):
+// a white L8 page with a black glyph gives the same plane and, through a full
+// GC16, ends lightening on white and darkening on black, as the vendor table.
+enum { LW = H, LH = W };    // portrait L8, rotated 90 degrees onto the W x H panel plane
+static uint8_t s_l8[LW * LH];
+
+static void test_recab_quant_path_matches_probe(void)
+{
+    memset(s_l8, 0xFF, sizeof(s_l8));                   // LVGL white
+    for (int y = 40; y < 60; y++) {
+        for (int x = 8; x < 20; x++) {
+            s_l8[y * LW + x] = 0x00;                     // LVGL black glyph
+        }
+    }
+    epd_quant_t q;
+    epd_quant_init(&q, LW, LH, W, H, EPD_ROT_90);
+    epd_quant_set_mode(&q, EPD_Q_GRAY4, false);         // as epd_backend_plus.c (disp.invert=0)
+    memset(s_tgt, 0x77, sizeof(s_tgt));
+    epd_quant_rect(&q, s_l8, LW, (epd_rect_t){0, 0, LW, LH}, s_tgt, NULL, PS);
+    int white = 0, black = 0, other = 0;
+    for (int i = 0; i < W * H; i++) {
+        const int v = px(s_tgt, i % W, i / W);
+        white += v == 15;
+        black += v == 0;
+        other += v != 0 && v != 15;
+    }
+    CHECK(other == 0 && black == 20 * 12 && white == W * H - 20 * 12);   // probe convention: 15 = white
+    memset(s_cur, 0xFF, sizeof(s_cur));                 // boot: the plane says white
+    const epd_wf_kind_t kind = epd_wf_kind_for(EPD_M_FULL_CLEAN, 25, false);
+    const epd_wf_phases_t *w = table(kind);
+    uint8_t lvl[W * H];
+    for (int i = 0; i < W * H; i++) {
+        lvl[i] = (uint8_t)px(s_tgt, i % W, i / W);
+    }
+    epd_wf_job_t j;
+    refresh(w, epd_wf_rule_for(EPD_M_FULL_CLEAN, kind), s_cur, s_tgt, ALL, &j);
+    for (int i = 0; i < W * H; i++) {
+        int last = 0;
+        for (int k = 0; k < w->phases; k++) {
+            last = s_codes[k][i] ? s_codes[k][i] : last;
+        }
+        CHECK(last == (lvl[i] == 15 ? 2 : 1));          // white ends lightening, black darkening
+    }
+}
+
 int main(void)
 {
     test_rule_for();
@@ -334,5 +382,6 @@ int main(void)
     test_gl16_repeat_same_image();
     test_gc16_white_from_any();
     test_hist_and_box();
+    test_recab_quant_path_matches_probe();
     TEST_DONE("wf_repeat");
 }
