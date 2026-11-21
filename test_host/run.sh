@@ -27,5 +27,6 @@ run_test() {
 run_test test_smoke test_host/test_smoke.c
 run_test test_sched test_host/test_sched.c src/epd_sched.c
 run_test test_quant src/epd_quant.c test_host/test_quant.c
+run_test test_dirty src/epd_dirty.c test_host/test_dirty.c
 
 exit $STATUS
