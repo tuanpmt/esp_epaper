@@ -32,5 +32,6 @@ run_test test_bus_rec test_host/epd_bus_rec.c test_host/test_bus_rec.c
 run_test test_ssd1677 src/controllers/ssd1677.c src/controllers/ssd1677_lut.c test_host/epd_bus_rec.c test_host/test_ssd1677.c
 run_test test_round src/epd_round.c test_host/test_round.c
 run_test test_tps65185 src/controllers/tps65185.c test_host/tps_fake.c test_host/test_tps65185.c
+run_test test_par_timing src/epd_par_timing.c test_host/test_par_timing.c
 
 exit $STATUS
