@@ -36,6 +36,7 @@ typedef struct {
     epd_rect_t rects[EPD_SCHED_MAX_RECTS];
     uint8_t n;
     bool has_intent;
+    bool awaiting_frame;        // an intent arrived; its LVGL frame has not been rendered yet
     epd_mode_t mode;
     uint32_t seq;
     bool force_full;
@@ -54,6 +55,10 @@ typedef struct {
 void epd_sched_init(epd_sched_t *s, uint16_t pan_w, uint16_t pan_h, uint8_t align, uint32_t busy_timeout_ms);
 void epd_sched_frame(epd_sched_t *s, const epd_rect_t *panel_rects, uint8_t n);   // LVGL flushed these areas
 void epd_sched_request(epd_sched_t *s, epd_mode_t mode, uint32_t seq);            // intent from os_display
+// The LVGL render that follows an intent is complete (with or without dirty
+// areas): pending intents may start now. Until then a run carrying an intent
+// never starts, so an intent never goes out with an older image.
+void epd_sched_frame_end(epd_sched_t *s);
 void epd_sched_force_full(epd_sched_t *s);       // invert changed / unpark / first frame
 void epd_sched_done(epd_sched_t *s, uint32_t now_ms);                              // panel finished
 bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out);             // one action, false = idle

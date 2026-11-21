@@ -58,6 +58,7 @@ static void test_sched_intent_without_frame_uses_full_screen(void)
     epd_act_t a;
     epd_sched_init(&s, W, H, 8, TMO);
     epd_sched_request(&s, EPD_M_FULL_CLEAN, 5);
+    epd_sched_frame_end(&s);
     CHECK(epd_sched_next(&s, 0, &a));
     CHECK(a.kind == EPD_ACT_START);
     CHECK(a.mode == EPD_M_FULL_CLEAN);
@@ -82,6 +83,7 @@ static void test_sched_coalesces_while_busy(void)
     epd_sched_frame(&s, &f[1], 1);
     epd_sched_frame(&s, &f[2], 1);
     epd_sched_request(&s, EPD_M_PARTIAL, 7);
+    epd_sched_frame_end(&s);
     CHECK(!epd_sched_next(&s, 50, &a));
     CHECK(!epd_sched_idle(&s));
 
@@ -108,7 +110,9 @@ static void test_sched_mode_upgrade_and_commit_order(void)
     epd_act_t a;
     epd_sched_init(&s, W, H, 8, TMO);
     epd_sched_request(&s, EPD_M_PARTIAL, 3);
+    epd_sched_frame_end(&s);
     epd_sched_request(&s, EPD_M_FULL_CLEAN, 4);
+    epd_sched_frame_end(&s);
     CHECK(epd_sched_next(&s, 0, &a));
     CHECK(a.kind == EPD_ACT_START && a.mode == EPD_M_FULL_CLEAN);
     CHECK(is_full_screen(&a));
@@ -119,6 +123,7 @@ static void test_sched_mode_upgrade_and_commit_order(void)
 
     // A stale intent arriving later must not make the commit seq go backwards
     epd_sched_request(&s, EPD_M_PARTIAL, 3);
+    epd_sched_frame_end(&s);
     CHECK(epd_sched_next(&s, 20, &a));
     CHECK(a.kind == EPD_ACT_START && a.mode == EPD_M_PARTIAL);
     epd_sched_done(&s, 30);
@@ -153,6 +158,7 @@ static void test_sched_busy_timeout_recovers(void)
     const uint32_t t0 = 1000;
     epd_sched_init(&s, W, H, 8, TMO);
     epd_sched_request(&s, EPD_M_PARTIAL, 9);
+    epd_sched_frame_end(&s);
     CHECK(epd_sched_next(&s, t0, &a));
     CHECK(a.kind == EPD_ACT_START);
     CHECK(epd_sched_wait_ms(&s, t0) == TMO);
@@ -244,8 +250,36 @@ static void test_sched_clip_align_and_overflow(void)
     }
 }
 
+// Review finding I1: an intent must wait for the LVGL frame that carries it.
+// The caller marks the end of the render that follows the intent with
+// epd_sched_frame_end(), with or without dirty areas.
+static void test_sched_intent_waits_for_its_frame(void)
+{
+    epd_sched_t s;
+    epd_act_t a;
+    epd_sched_init(&s, 800, 480, 8, 2000);
+    epd_sched_request(&s, EPD_M_FULL_CLEAN, 9);
+    CHECK(!epd_sched_next(&s, 0, &a));          // not before the frame
+    CHECK(!epd_sched_idle(&s));
+    epd_sched_frame_end(&s);                    // render done, nothing dirty
+    CHECK(epd_sched_next(&s, 0, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_FULL_CLEAN);
+
+    epd_sched_init(&s, 800, 480, 8, 2000);
+    const epd_rect_t r = {0, 0, 16, 8};
+    epd_sched_frame(&s, &r, 1);                 // a frame without intent still runs at once
+    CHECK(epd_sched_next(&s, 0, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_FAST);
+    epd_sched_request(&s, EPD_M_PARTIAL, 3);    // during the run
+    epd_sched_done(&s, 10);
+    CHECK(epd_sched_next(&s, 10, &a) && a.kind == EPD_ACT_COMMIT);
+    CHECK(!epd_sched_next(&s, 10, &a));         // the intent's frame is not rendered yet
+    epd_sched_frame(&s, &r, 1);
+    epd_sched_frame_end(&s);
+    CHECK(epd_sched_next(&s, 10, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_PARTIAL);
+}
+
 int main(void)
 {
+    test_sched_intent_waits_for_its_frame();
     test_sched_frame_without_intent_is_fast_seq0();
     test_sched_intent_without_frame_uses_full_screen();
     test_sched_coalesces_while_busy();

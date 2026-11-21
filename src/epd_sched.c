@@ -109,9 +109,15 @@ void epd_sched_request(epd_sched_t *s, epd_mode_t mode, uint32_t seq)
         s->mode = mode;
     }
     s->has_intent = true;
+    s->awaiting_frame = true;
     if (seq > s->seq) {
         s->seq = seq;
     }
+}
+
+void epd_sched_frame_end(epd_sched_t *s)
+{
+    s->awaiting_frame = false;
 }
 
 void epd_sched_force_full(epd_sched_t *s)
@@ -171,7 +177,7 @@ bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out)
         out->error = s->commit_error;
         return true;
     }
-    if (s->busy || !work_pending(s)) {
+    if (s->busy || !work_pending(s) || s->awaiting_frame) {
         return false;
     }
 
