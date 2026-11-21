@@ -33,5 +33,7 @@ run_test test_ssd1677 src/controllers/ssd1677.c src/controllers/ssd1677_lut.c te
 run_test test_round src/epd_round.c test_host/test_round.c
 run_test test_tps65185 src/controllers/tps65185.c test_host/tps_fake.c test_host/test_tps65185.c
 run_test test_par_timing src/epd_par_timing.c test_host/test_par_timing.c
+run_test test_wf_data src/epd_wf.c src/panels/e0470_wf_data.c test_host/test_wf_data.c
+run_test test_wf src/epd_wf.c src/panels/e0470_wf_data.c test_host/test_wf.c
 
 exit $STATUS
