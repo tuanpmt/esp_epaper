@@ -64,7 +64,7 @@ static struct {
     portMUX_TYPE mux;
     uint32_t ckv_period_us, ckv_high_us;   // the integer delays of the frame start
     int64_t t_lcd_start, t_rmt_start;
-    volatile int64_t t_vsync;
+    volatile int64_t t_vsync, t_eof;
     volatile uint32_t eofs, underrun_seen;
     epd_s31_bus_stats_t st;
 } s = {.mux = portMUX_INITIALIZER_UNLOCKED};
@@ -112,6 +112,7 @@ static IRAM_ATTR bool on_dma_eof(gdma_channel_handle_t ch, gdma_event_data_t *ev
     (void)ev;
     (void)user;
     s.eofs++;
+    s.t_eof = esp_timer_get_time();     // the last data byte entered the LCD
     return false;
 }
 
@@ -279,14 +280,12 @@ static esp_err_t scan_wait(void *ctx, uint32_t timeout_us)
     (void)ctx;
     const TickType_t ticks = (TickType_t)(((uint64_t)timeout_us * configTICK_RATE_HZ + 999999u) / 1000000u) + 1;
     esp_err_t err = xSemaphoreTake(s.done, ticks) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
-    int64_t t_ckv_end = 0;
     if (err == ESP_OK) {
-        // the CKV loop runs (lines + 5) periods from before the LCD start: wait for its end
+        // the CKV loop runs (rows + 5) periods from before the LCD start: let it end
         const int64_t limit = esp_timer_get_time() + 4 * (int64_t)s.t.line_ns / 1000 + 100;
         while (!(rmt_ll_tx_get_interrupt_status_raw(&RMT, CKV_CHAN) & RMT_LL_EVENT_TX_LOOP_END(CKV_CHAN)) &&
                esp_timer_get_time() < limit) {
         }
-        t_ckv_end = esp_timer_get_time();
         rmt_ll_clear_interrupt_status(&RMT, RMT_LL_EVENT_TX_MASK(CKV_CHAN));
     } else {
         s.st.timeouts++;
@@ -305,7 +304,10 @@ static esp_err_t scan_wait(void *ctx, uint32_t timeout_us)
     if (err == ESP_OK) {
         s.st.frames++;
         s.st.last_frame_us = (uint32_t)(s.t_vsync - s.t_lcd_start);
-        s.st.last_rmt_lag_us = (int32_t)(t_ckv_end - s.t_vsync);
+        s.st.last_eof_us = (uint32_t)(s.t_eof - s.t_lcd_start);
+        // nominal CKV end (rows + 5 periods from the RMT start) minus the last data fetch
+        const int64_t ckv_end = s.t_rmt_start + (int64_t)(s.rows + CKV_EXTRA_LINES) * s.t.line_ns / 1000;
+        s.st.last_ckv_margin_us = (int32_t)(ckv_end - s.t_eof);
         s.st.last_lead_ns = (uint32_t)((s.t_lcd_start - s.t_rmt_start) * 1000);
     }
     return err;

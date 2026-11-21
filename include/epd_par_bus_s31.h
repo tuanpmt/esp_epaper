@@ -40,8 +40,9 @@ typedef struct {
 
 typedef struct {
     uint32_t frames, underruns, timeouts, sync_errors;
-    uint32_t last_frame_us;     // LCD start to VSYNC end: (1 + rows + 1) lines
-    int32_t last_rmt_lag_us;    // CKV loop end minus LCD frame end (rows + 5 CKV periods from before the start)
+    uint32_t last_frame_us;     // LCD start to the VSYNC_END interrupt
+    uint32_t last_eof_us;       // LCD start to the DMA EOF: the last data byte entered the LCD
+    int32_t last_ckv_margin_us; // nominal CKV end (rows + 5 periods) minus the DMA EOF: > 0 = CKV still clocks
     uint32_t last_lead_ns;      // CKV start to LCD start: one CKV period + the CKV high time (32 us)
     uint32_t last_dma_eofs;     // DMA EOF events in the last frame (1)
 } epd_s31_bus_stats_t;
