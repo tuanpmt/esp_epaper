@@ -20,6 +20,13 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
     if (o->hv_on(o->ctx) != ESP_OK) {
         return finish(o, EPD_RUN_HV_FAIL, hv_t0, st);
     }
+    // The budget limits the time with the rails up, from the return of hv_on:
+    // hv_on's own time (PMIC wake from SLEEP, register writes, PWR_GOOD wait)
+    // varies with the I2C traffic and must not eat the scan time (device
+    // stage d: GC16 aborted after 14 phases when hv_on took ~0.85 s). The
+    // BSP watchdog still bounds PWRUP high independently.
+    const uint64_t rails_t0 = o->now_us(o->ctx);
+    st->hv_on_us = (uint32_t)(rails_t0 - hv_t0);
     const uint64_t budget_us = (uint64_t)budget_ms * 1000u;
     uint64_t c0 = o->now_us(o->ctx);
     if (phases) {
@@ -38,8 +45,15 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         if (k == 0) {
             origin = start;
         }
-        if (start - hv_t0 > budget_us) {
-            return finish(o, EPD_RUN_BUDGET, hv_t0, st);
+        // Budget: checked once, before phase 0 is scanned. Cutting a waveform
+        // in the middle leaves the panel in its dark phases (device stage d:
+        // GC16 cut after 15 phases showed a black page with a white UI), so
+        // after phase 0 only real faults stop the run: scan errors, PWR_GOOD
+        // drop, and the BSP high-voltage watchdog outside this loop.
+        if (k == 0 && start - rails_t0 + (uint64_t)phases * phase_us > budget_us) {
+            const epd_run_result_t r = finish(o, EPD_RUN_BUDGET, hv_t0, st);
+            st->unknown = false;    // nothing was scanned: the panel keeps its image
+            return r;
         }
         if (k && start > slot + phase_us / 4) {
             st->late_phases++;

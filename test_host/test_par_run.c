@@ -10,8 +10,11 @@ typedef struct {
     int pg_fail_at;     // pg_ok false at this phase check (0-based), -1 never
     int scan_fail_at;   // scan_wait fails for this phase, -1 never
     bool hv_fail;
+    uint32_t hv_on_us;      // time hv_on takes (wake, I2C, PG wait)
     int pg_checks, scans, hv_offs, hv_ons;
     int late_at;            // compute of this phase stalls 20 ms
+    int stall_at;           // compute of this phase stalls stall_us
+    uint32_t stall_us;
     unsigned reuse_mask;    // compute(phase) reports "same as the previous phase" for these phases
     const uint8_t *scanned[64];
     uint64_t scan_t[64];
@@ -23,7 +26,7 @@ static void lg(fk_t *f, const char *s)
     strncat(f->log, s, sizeof(f->log) - strlen(f->log) - 1);
 }
 
-static esp_err_t f_hv_on(void *c) { fk_t *f = c; f->hv_ons++; lg(f, "ON "); return f->hv_fail ? ESP_FAIL : ESP_OK; }
+static esp_err_t f_hv_on(void *c) { fk_t *f = c; f->hv_ons++; f->now += f->hv_on_us; lg(f, "ON "); return f->hv_fail ? ESP_FAIL : ESP_OK; }
 static esp_err_t f_hv_off(void *c) { fk_t *f = c; f->hv_offs++; lg(f, "OFF "); return ESP_OK; }
 static bool f_pg(void *c)
 {
@@ -37,7 +40,7 @@ static bool f_compute(void *c, int phase, uint8_t *buf)
 {
     fk_t *f = c;
     char s[16];
-    if (f->reuse_mask & (1u << phase)) {
+    if (phase < 32 && (f->reuse_mask & (1u << phase))) {
         snprintf(s, sizeof(s), "R%d ", phase);
         lg(f, s);
         return false;
@@ -45,7 +48,7 @@ static bool f_compute(void *c, int phase, uint8_t *buf)
     snprintf(s, sizeof(s), "C%d ", phase);
     lg(f, s);
     f->computed[phase] = buf;
-    f->now += f->compute_us + (phase == f->late_at ? 20000u : 0u);
+    f->now += f->compute_us + (phase == f->late_at ? 20000u : 0u) + (phase == f->stall_at ? f->stall_us : 0u);
     return true;
 }
 static esp_err_t f_scan_start(void *c, const uint8_t *buf)
@@ -84,6 +87,7 @@ static void setup(void)
     f.pg_fail_at = -1;
     f.scan_fail_at = -1;
     f.late_at = -1;
+    f.stall_at = -1;
     ops = (epd_par_run_ops_t){.ctx = &f, .hv_on = f_hv_on, .hv_off = f_hv_off, .pg_ok = f_pg, .compute = f_compute,
                               .scan_start = f_scan_start, .scan_wait = f_scan_wait, .now_us = f_now,
                               .wait_until_us = f_wait};
@@ -165,15 +169,30 @@ static void test_run_scan_error_marks_unknown(void)
     CHECK(st.unknown && st.phases_done == 0);
 }
 
-static void test_run_budget_exceeded_aborts(void)
+// The budget is checked once, before phase 0: a run that cannot fit is not
+// started (the panel keeps its image); 48 phases x 11.76 ms = 565 ms > 300 ms
+static void test_run_budget_checked_before_phase0(void)
 {
     setup();
     epd_par_run_stats_t st;
-    // 48 phases x 11.76 ms = 565 ms > 300 ms budget
     CHECK(epd_par_run(&ops, 48, 85, 300, bufs, &st) == EPD_RUN_BUDGET);
-    CHECK(f.hv_offs == 1 && st.unknown);
-    CHECK(st.hv_us <= 300000 + 11764 + 3000);
-    CHECK(st.phases_done < 48 && st.phases_done >= 24);
+    CHECK(f.scans == 0 && f.hv_offs == 1);
+    CHECK(!st.unknown && st.phases_done == 0);
+}
+
+// Device stage d: a GC16 cut after 15 phases by the budget left the panel in
+// the waveform's dark middle (black page, white UI, ghosts). Once phase 0 has
+// been scanned, no deadline stops a run; only real faults (scan error, PWR_GOOD
+// drop, and the BSP high-voltage watchdog outside this loop) do.
+static void test_run_never_cancelled_after_phase0(void)
+{
+    setup();
+    f.stall_at = 10;
+    f.stall_us = 600000;    // a 0.6 s stall in the middle
+    epd_par_run_stats_t st;
+    CHECK(epd_par_run(&ops, 48, 85, 1020, bufs, &st) == EPD_RUN_OK);
+    CHECK(st.phases_done == 48 && f.scans == 48 - (int)st.reused);
+    CHECK(st.late_phases >= 1);     // reported, not fatal
 }
 
 static void test_run_hv_fail_no_scan(void)
@@ -200,13 +219,29 @@ static void test_run_reuses_identical_phase(void)
     CHECK(st.reused == 2);
 }
 
+// Device stage d: a GC16 aborted with BUDGET after 14-15 phases because
+// hv_on (PMIC wake from SLEEP, I2C, PWR_GOOD) took about 0.85 s at that
+// moment. The budget limits the time with the rails up: it starts once
+// hv_on has returned, and hv_on's own time is reported.
+static void test_run_budget_starts_after_hv_on(void)
+{
+    setup();
+    f.hv_on_us = 850000;
+    epd_par_run_stats_t st;
+    CHECK(epd_par_run(&ops, 48, 85, 1020, bufs, &st) == EPD_RUN_OK);
+    CHECK(st.phases_done == 48);
+    CHECK(st.hv_on_us == 850000);
+}
+
 int main(void)
 {
     test_run_order_double_buffer();
     test_run_paces_phases();
     test_run_pg_drop_aborts_and_powers_off();
     test_run_scan_error_marks_unknown();
-    test_run_budget_exceeded_aborts();
+    test_run_budget_checked_before_phase0();
+    test_run_never_cancelled_after_phase0();
+    test_run_budget_starts_after_hv_on();
     test_run_hv_fail_no_scan();
     test_run_reuses_identical_phase();
     test_run_phase_timing_stats();

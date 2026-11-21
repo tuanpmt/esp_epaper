@@ -42,6 +42,7 @@ typedef struct {
     uint16_t phases_done;       // phases fully scanned
     bool unknown;               // aborted after driving: the panel image is unknown
     uint32_t hv_us;             // rails on to rails off
+    uint32_t hv_on_us;          // time spent in hv_on (wake, registers, PWR_GOOD)
     uint32_t compute_max_us;    // slowest phase computation
     uint32_t late_phases;       // phases that started > phase_us / 4 after their slot
     uint16_t reused;            // phases that rescanned the previous buffer
