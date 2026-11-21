@@ -8,6 +8,8 @@ idf_component_register(
         "src/epd_sched.c"
         "src/epd_quant.c"
         "src/epd_dirty.c"
+        "src/controllers/ssd1677.c"
+        "src/controllers/ssd1677_lut.c"
         "src/controllers/ssd16xx.c"
         "src/controllers/gdey0154_lut.c"
         "src/controllers/acep_6color.c"

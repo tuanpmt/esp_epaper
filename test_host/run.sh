@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${EPD_TEST_OUT:-$ROOT/build_host}"
 mkdir -p "$OUT"
 CFLAGS=(-std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -D_DEFAULT_SOURCE)
-INC=(-I "$ROOT/include" -I "$ROOT/src" -I "$ROOT/test_host")
+INC=(-I "$ROOT/include" -I "$ROOT/src" -I "$ROOT/src/controllers" -I "$ROOT/test_host")
 STATUS=0
 FILTER="${1:-}"
 
@@ -29,5 +29,6 @@ run_test test_sched test_host/test_sched.c src/epd_sched.c
 run_test test_quant src/epd_quant.c test_host/test_quant.c
 run_test test_dirty src/epd_dirty.c test_host/test_dirty.c
 run_test test_bus_rec test_host/epd_bus_rec.c test_host/test_bus_rec.c
+run_test test_ssd1677 src/controllers/ssd1677.c src/controllers/ssd1677_lut.c test_host/epd_bus_rec.c test_host/test_ssd1677.c
 
 exit $STATUS
