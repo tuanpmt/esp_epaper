@@ -34,7 +34,7 @@
 #define ENTRY_X_INC_Y_DEC 0x01
 
 #define BUSY_POLL_LIMIT_MS 3000
-#define ARM_SETTLE_MS 1         // let BUSY rise after 0x20 before arming the idle interrupt
+#define ARM_RISE_MAX_MS 20      // poll for BUSY to rise after 0x20 before arming the idle interrupt
 
 // Partial LUT timing layout inside the 0x32 wave bytes
 #define LUT_TIMING_AT 50        // after 5 VS rows x 10 groups
@@ -248,7 +248,12 @@ esp_err_t epd_ssd1677_start(epd_ssd1677_t *c, epd_mode_t mode, epd_busy_cb_t don
         err = cmd(c, CMD_ACTIVATE, NULL, 0);
     }
     if (err == ESP_OK) {
-        c->cfg.bus->delay_ms(c->cfg.bus, ARM_SETTLE_MS);
+        // BUSY rises shortly after 0x20; arming the idle interrupt before it
+        // rises would report the refresh done at once. If it never rises the
+        // refresh is armed anyway (the callback fires now, the run looks instant).
+        for (uint32_t ms = 0; ms < ARM_RISE_MAX_MS && !c->cfg.bus->busy(c->cfg.bus); ms++) {
+            c->cfg.bus->delay_ms(c->cfg.bus, 1);
+        }
         err = c->cfg.bus->arm_busy_irq(c->cfg.bus, done, ctx);
     }
     return err;

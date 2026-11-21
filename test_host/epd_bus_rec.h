@@ -28,6 +28,7 @@ typedef struct {
     epd_rec_t *log;
     size_t n, cap;
     bool busy_level;        // what busy() returns; set by the test
+    uint32_t low_reads;     // the next low_reads busy() calls return false (BUSY not risen yet)
     bool reset_seen;        // arm before the first reset is refused, like the device
     epd_busy_cb_t cb;       // armed callback, NULL when not armed
     void *cb_ctx;

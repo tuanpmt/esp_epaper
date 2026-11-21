@@ -51,7 +51,12 @@ static esp_err_t rec_data(epd_bus_t *b, const uint8_t *data, size_t len)
 
 static bool rec_busy(epd_bus_t *b)
 {
-    return ((epd_bus_rec_t *)b)->busy_level;
+    epd_bus_rec_t *r = (epd_bus_rec_t *)b;
+    if (r->low_reads > 0) {
+        r->low_reads--;
+        return false;
+    }
+    return r->busy_level;
 }
 
 static esp_err_t rec_arm(epd_bus_t *b, epd_busy_cb_t cb, void *ctx)

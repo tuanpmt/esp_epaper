@@ -271,8 +271,32 @@ static void test_ssd1677_partial_timing_roundtrip(void)
     CHECK(memcmp(&t, &want, sizeof(t)) == 0);
 }
 
+// BUSY rises a little after 0x20: arming the idle interrupt before that would
+// report the refresh done at once. start() polls (1 ms steps) until BUSY rises.
+static void test_ssd1677_arm_waits_for_busy_high(void)
+{
+    setup(true);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);   // LUT loaded
+    epd_bus_rec_fire_busy(&R);
+    epd_bus_rec_set_busy(&R, true);
+    R.low_reads = 3;
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);
+    const int act = epd_bus_rec_find_cmd(&R, 0x20, 0);
+    CHECK(act >= 0);
+    size_t i = (size_t)act + 1;
+    int delays = 0;
+    while (i < R.n && R.log[i].type == EPD_REC_DELAY) {
+        delays++;
+        i++;
+    }
+    CHECK(delays == 3);
+    CHECK(i < R.n && R.log[i].type == EPD_REC_ARM);
+}
+
 int main(void)
 {
+    test_ssd1677_arm_waits_for_busy_high();
     test_ssd1677_init_sequence();
     test_ssd1677_window_math();
     test_ssd1677_partial_writes_old_plane_after();

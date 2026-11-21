@@ -11,6 +11,7 @@ static const char *TAG = "epd_lvgl";
 typedef struct {
     epd_lvgl_cfg_t cfg;
     uint8_t *l8;                            // full-screen L8 render buffer (PSRAM)
+    size_t l8_stride;                       // bytes per L8 row, as LVGL lays the buffer out
     epd_rect_t rects[EPD_LVGL_MAX_RECTS];   // panel rects of the refresh in progress
     uint8_t n;
     int64_t refr_start_us;
@@ -43,7 +44,7 @@ static void quantize_area(glue_t *g, const lv_area_t *area)
     const epd_rect_t lr = {(int16_t)area->x1, (int16_t)area->y1, (int16_t)lv_area_get_width(area),
                            (int16_t)lv_area_get_height(area)};
     const int64_t t0 = esp_timer_get_time();
-    epd_quant_rect(g->cfg.quant, g->l8, g->cfg.hor_res, lr, g->cfg.panel_plane0, g->cfg.panel_plane1,
+    epd_quant_rect(g->cfg.quant, g->l8, g->l8_stride, lr, g->cfg.panel_plane0, g->cfg.panel_plane1,
                    g->cfg.pan_stride);
     g->quant_acc_us += (uint32_t)(esp_timer_get_time() - t0);
     g->area_acc_px += (uint32_t)lr.w * (uint32_t)lr.h;
@@ -104,7 +105,9 @@ lv_display_t *epd_lvgl_create(const epd_lvgl_cfg_t *cfg)
         return NULL;
     }
     glue_t *g = calloc(1, sizeof(*g));
-    const size_t size = (size_t)cfg->hor_res * cfg->ver_res;
+    // LVGL may pad rows (LV_DRAW_BUF_STRIDE_ALIGN): use its stride, not the width
+    const size_t stride = lv_draw_buf_width_to_stride(cfg->hor_res, LV_COLOR_FORMAT_L8);
+    const size_t size = stride * cfg->ver_res;
     uint8_t *l8 = heap_caps_aligned_alloc(4, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!g || !l8) {
         ESP_LOGE(TAG, "no memory for the %u B L8 buffer", (unsigned)size);
@@ -115,6 +118,7 @@ lv_display_t *epd_lvgl_create(const epd_lvgl_cfg_t *cfg)
     memset(l8, 0xFF, size);     // white paper until LVGL draws
     g->cfg = *cfg;
     g->l8 = l8;
+    g->l8_stride = stride;
     lv_display_t *disp = lv_display_create(cfg->hor_res, cfg->ver_res);
     if (!disp) {
         free(g);
