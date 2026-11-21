@@ -17,6 +17,8 @@ typedef struct {
     epd_dither_mode_t dither_mode;  // Dithering algorithm
     bool use_partial_refresh;       // Enable partial refresh optimization
     uint32_t partial_threshold;     // Min dirty area (pixels) for partial refresh
+    bool dither_protect_bw;         // Floyd-Steinberg: keep pure black/white pixels (text,
+                                    // lines) out of error diffusion. Costs w*h/8 bytes
 } epd_lvgl_config_t;
 
 #define EPD_LVGL_CONFIG_DEFAULT() { \
@@ -25,6 +27,7 @@ typedef struct {
     .dither_mode = EPD_DITHER_NONE, \
     .use_partial_refresh = false, \
     .partial_threshold = 1000, \
+    .dither_protect_bw = false, \
 }
 
 /**

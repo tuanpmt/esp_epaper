@@ -56,6 +56,7 @@ typedef struct {
     uint32_t partial_threshold;
     uint8_t *lvgl_buf;      // RGB565 buffer for LVGL
     uint8_t *rgb_buf;       // RGB888 buffer for dithering
+    uint8_t *solid_mask;    // 1 bit per pixel: pure black/white pixels kept out of error diffusion
     uint32_t lvgl_buf_size;
     uint16_t width;         // Native panel width (framebuffer)
     uint16_t height;        // Native panel height (framebuffer)
@@ -91,12 +92,41 @@ static const struct {
 
 #define BWRY_PALETTE_SIZE 4
 
+static inline int rgb_to_gray(int r, int g, int b)
+{
+    return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
+// Quantize 0-255 gray to the nearest of 4 levels (0 = black, 3 = white)
+static inline uint8_t gray_to_level4(int gray)
+{
+    return (uint8_t)((gray * 3 + 127) / 255);
+}
+
+// Framebuffer fill byte for an all-white screen
+static uint8_t fb_white_byte(const epd_lvgl_ctx_t *ctx)
+{
+    if (ctx->bits_per_pixel == 4) {
+        return (EPD_PIXEL_WHITE << 4) | EPD_PIXEL_WHITE;
+    }
+    if (ctx->bits_per_pixel == 2) {
+        // 4-gray: white = level 3 (11); BWRY: white = 01
+        return (ctx->color_mode == EPD_COLOR_4GRAY) ? 0xFF : 0x55;
+    }
+    return 0xFF;  // 1-bit white
+}
+
 // Find nearest palette color (returns palette index)
 static uint8_t find_nearest_color_idx(int r, int g, int b, epd_color_mode_t mode)
 {
     uint32_t min_dist = UINT32_MAX;
     uint8_t best = 0;
     
+    if (mode == EPD_COLOR_4GRAY) {
+        // Palette index == gray level
+        return gray_to_level4(rgb_to_gray(r, g, b));
+    }
+
     if (mode == EPD_COLOR_BW) {
         // BW mode: simple threshold
         int gray = (r * 299 + g * 587 + b * 114) / 1000;
@@ -140,6 +170,10 @@ uint8_t epd_rgb_to_epaper_color(uint8_t r, uint8_t g, uint8_t b, epd_color_mode_
     if (mode == EPD_COLOR_BW) {
         int gray = (r * 299 + g * 587 + b * 114) / 1000;
         return (gray < 128) ? EPD_PIXEL_BLACK : EPD_PIXEL_WHITE;
+    }
+
+    if (mode == EPD_COLOR_4GRAY) {
+        return gray_to_level4(rgb_to_gray(r, g, b));
     }
     
     if (mode == EPD_COLOR_4COLOR) {
@@ -280,6 +314,9 @@ static void apply_floyd_steinberg_dithering(epd_lvgl_ctx_t *ctx, uint8_t *fb)
                 pal_r = bw_palette[pal_idx].r;
                 pal_g = bw_palette[pal_idx].g;
                 pal_b = bw_palette[pal_idx].b;
+            } else if (ctx->color_mode == EPD_COLOR_4GRAY) {
+                epaper_color = pal_idx;  // Gray level
+                pal_r = pal_g = pal_b = pal_idx * 85;
             } else if (ctx->color_mode == EPD_COLOR_4COLOR) {
                 epaper_color = bwry_palette[pal_idx].epaper_color;
                 pal_r = bwry_palette[pal_idx].r;
@@ -300,35 +337,41 @@ static void apply_floyd_steinberg_dithering(epd_lvgl_ctx_t *ctx, uint8_t *fb)
             int err_g = g - pal_g;
             int err_b = b - pal_b;
             
-            // Distribute error to neighbors (Floyd-Steinberg)
+            // Distribute error to neighbors (Floyd-Steinberg).
+            // Pixels marked solid (pure black/white, e.g. 1 bpp text and lines)
+            // never receive error, so they stay crisp next to gradients.
+            const uint8_t *mask = ctx->solid_mask;
+            const int w = ctx->lv_width;
+#define FS_TARGET(nx, ny) (!mask || !((mask[((ny) * w + (nx)) >> 3] >> (((ny) * w + (nx)) & 7)) & 1))
             // Right pixel: 7/16
-            if (x + 1 < ctx->lv_width) {
+            if (x + 1 < ctx->lv_width && FS_TARGET(x + 1, y)) {
                 int ni = idx + 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r * 7 / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g * 7 / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b * 7 / 16);
             }
             // Bottom-left pixel: 3/16
-            if (y + 1 < ctx->lv_height && x > 0) {
+            if (y + 1 < ctx->lv_height && x > 0 && FS_TARGET(x - 1, y + 1)) {
                 int ni = ((y + 1) * ctx->lv_width + x - 1) * 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r * 3 / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g * 3 / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b * 3 / 16);
             }
             // Bottom pixel: 5/16
-            if (y + 1 < ctx->lv_height) {
+            if (y + 1 < ctx->lv_height && FS_TARGET(x, y + 1)) {
                 int ni = ((y + 1) * ctx->lv_width + x) * 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r * 5 / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g * 5 / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b * 5 / 16);
             }
             // Bottom-right pixel: 1/16
-            if (y + 1 < ctx->lv_height && x + 1 < ctx->lv_width) {
+            if (y + 1 < ctx->lv_height && x + 1 < ctx->lv_width && FS_TARGET(x + 1, y + 1)) {
                 int ni = ((y + 1) * ctx->lv_width + x + 1) * 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b / 16);
             }
+#undef FS_TARGET
         }
     }
     
@@ -374,10 +417,21 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
                 uint8_t g = (g6 << 2) | (g6 >> 4);  // 6-bit to 8-bit
                 uint8_t b = (b5 << 3) | (b5 >> 2);  // 5-bit to 8-bit
                 
-                int idx = (y * ctx->lv_width + x) * 3;
+                uint32_t pix = (uint32_t)y * ctx->lv_width + x;
+                int idx = pix * 3;
                 ctx->rgb_buf[idx + 0] = r;
                 ctx->rgb_buf[idx + 1] = g;
                 ctx->rgb_buf[idx + 2] = b;
+
+                if (ctx->solid_mask) {
+                    bool solid = (r == g && g == b) && (r == 0 || r == 255);
+                    uint8_t bit = 1 << (pix & 7);
+                    if (solid) {
+                        ctx->solid_mask[pix >> 3] |= bit;
+                    } else {
+                        ctx->solid_mask[pix >> 3] &= ~bit;
+                    }
+                }
             }
             // Yield periodically
             if ((y % 50) == 0) {
@@ -390,15 +444,7 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
         if (is_last) {
             // Clear framebuffer first using bits_per_pixel from panel
             uint32_t fb_size = epd_calc_buffer_size(ctx->width, ctx->height, ctx->bits_per_pixel);
-            uint8_t fill_byte;
-            if (ctx->bits_per_pixel == 4) {
-                fill_byte = (EPD_PIXEL_WHITE << 4) | EPD_PIXEL_WHITE;
-            } else if (ctx->bits_per_pixel == 2) {
-                fill_byte = 0x55;  // White (01) for all 4 pixels
-            } else {
-                fill_byte = 0xFF;  // 1-bit white
-            }
-            memset(fb, fill_byte, fb_size);
+            memset(fb, fb_white_byte(ctx), fb_size);
             
             apply_floyd_steinberg_dithering(ctx, fb);
         }
@@ -408,15 +454,7 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
         bool is_first = (area->x1 == 0 && area->y1 == 0);
         if (is_first) {
             uint32_t fb_size = epd_calc_buffer_size(ctx->width, ctx->height, ctx->bits_per_pixel);
-            uint8_t fill_byte;
-            if (ctx->bits_per_pixel == 4) {
-                fill_byte = (EPD_PIXEL_WHITE << 4) | EPD_PIXEL_WHITE;
-            } else if (ctx->bits_per_pixel == 2) {
-                fill_byte = 0x55;  // White (01) for all 4 pixels
-            } else {
-                fill_byte = 0xFF;  // 1-bit white
-            }
-            memset(fb, fill_byte, fb_size);
+            memset(fb, fb_white_byte(ctx), fb_size);
         }
         
         for (int y = area->y1; y <= area->y2; y++) {
@@ -439,6 +477,15 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
                     if (ctx->color_mode == EPD_COLOR_BW) {
                         int gray = (r * 299 + g * 587 + b * 114) / 1000;
                         epaper_color = (gray > threshold) ? EPD_PIXEL_WHITE : EPD_PIXEL_BLACK;
+                    } else if (ctx->color_mode == EPD_COLOR_4GRAY) {
+                        // Ordered dithering between the two nearest gray levels
+                        int scaled = rgb_to_gray(r, g, b) * 3;
+                        int level = scaled / 255;
+                        int rem = scaled - level * 255;
+                        if (level < 3 && rem > threshold) {
+                            level++;
+                        }
+                        epaper_color = (uint8_t)level;
                     } else if (ctx->color_mode == EPD_COLOR_4COLOR) {
                         // Ordered dithering for 4-color BWRY
                         // Adjust RGB values with dither threshold for better color selection
@@ -588,6 +635,17 @@ lv_display_t* epd_lvgl_init(const epd_lvgl_config_t *config)
         } else {
             ESP_LOGW(TAG, "Not enough RAM for Floyd-Steinberg, using Bayer ordered dithering");
         }
+
+        if (ctx->rgb_buf && config->dither_protect_bw) {
+            size_t mask_size = ((size_t)info.width * info.height + 7) / 8;
+            ctx->solid_mask = heap_caps_calloc(1, mask_size, MALLOC_CAP_SPIRAM);
+            if (!ctx->solid_mask) {
+                ctx->solid_mask = calloc(1, mask_size);
+            }
+            if (!ctx->solid_mask) {
+                ESP_LOGW(TAG, "Not enough RAM for dither_protect_bw, option disabled");
+            }
+        }
     }
     
     // Create LVGL display
@@ -595,6 +653,7 @@ lv_display_t* epd_lvgl_init(const epd_lvgl_config_t *config)
     if (!disp) {
         ESP_LOGE(TAG, "Failed to create display");
         if (ctx->rgb_buf) free(ctx->rgb_buf);
+        if (ctx->solid_mask) free(ctx->solid_mask);
         free(ctx->lvgl_buf);
         free(ctx);
         return NULL;
@@ -623,6 +682,7 @@ void epd_lvgl_deinit(lv_display_t *disp)
     if (ctx) {
         if (ctx->lvgl_buf) free(ctx->lvgl_buf);
         if (ctx->rgb_buf) free(ctx->rgb_buf);
+        if (ctx->solid_mask) free(ctx->solid_mask);
         free(ctx);
     }
     

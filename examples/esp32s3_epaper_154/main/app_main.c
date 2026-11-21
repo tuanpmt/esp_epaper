@@ -6,9 +6,11 @@
  * Panel: GDEY0154D67 (200x200 Black/White)
  * 
  * Features demonstrated:
- * - Floyd-Steinberg dithering for grayscale simulation
+ * - Vietnamese text with FreeType-hinted fonts (tools/font_conv/epd_font_conv.py)
+ * - Floyd-Steinberg dithering for grayscale simulation, with dither_protect_bw
+ *   keeping 1 bpp text and lines crisp
  * - Partial refresh with counter updates
- * - Gradient bars and gray level display
+ * - Optional 4-gray mode (menuconfig: E-Paper 1.54 Example -> Use 4-gray mode)
  * 
  * @see https://www.waveshare.com/wiki/ESP32-S3-ePaper-1.54
  */
@@ -25,6 +27,26 @@
 #include "lvgl.h"
 
 static const char *TAG = "epaper_154";
+
+#if CONFIG_EXAMPLE_EPD_4GRAY
+#define EXAMPLE_4GRAY 1
+// 2 bpp anti-aliased fonts: opacity levels map exactly to the panel's 4 grays
+LV_FONT_DECLARE(font_vn_12_aa);
+LV_FONT_DECLARE(font_vn_16_aa);
+#define FONT_BODY   (&font_vn_12_aa)
+#define FONT_TITLE  (&font_vn_16_aa)
+#define EPD_PANEL   EPD_PANEL_GDEY0154D67_4GRAY
+#define UPDATE_INTERVAL_MS  30000   // Every update is a full refresh in 4-gray mode
+#else
+#define EXAMPLE_4GRAY 0
+// 1 bpp fonts with FreeType mono hinting: crisp on B/W panels
+LV_FONT_DECLARE(font_vn_12);
+LV_FONT_DECLARE(font_vn_16);
+#define FONT_BODY   (&font_vn_12)
+#define FONT_TITLE  (&font_vn_16)
+#define EPD_PANEL   EPD_PANEL_GDEY0154D67
+#define UPDATE_INTERVAL_MS  10000
+#endif
 
 // Board power pin (ESP32-S3-ePaper-1.54 specific)
 #define EPD_PWR_PIN     GPIO_NUM_6   // E-Paper power enable (LOW = ON)
@@ -114,86 +136,93 @@ static void create_grayscale_bar(lv_obj_t *parent, int x, int y, int w, int h, i
 }
 
 /**
- * @brief Create demo UI for 200x200 display with grayscale demo
+ * @brief Create demo UI for 200x200 display with Vietnamese text
  */
 static void create_demo_ui(void)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
-    
+    lv_obj_set_style_text_color(scr, lv_color_black(), 0);
+    // Children inherit the body font
+    lv_obj_set_style_text_font(scr, FONT_BODY, 0);
+
     // Title
     lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "E-Paper 1.54\"");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 5);
-    
-    // Grayscale demo section
-    lv_obj_t *gs_label = lv_label_create(scr);
-    lv_label_set_text(gs_label, "Grayscale Dithering");
-    lv_obj_align(gs_label, LV_ALIGN_TOP_MID, 0, 25);
-    
+    lv_obj_set_style_text_font(title, FONT_TITLE, 0);
+    lv_label_set_text(title, "Màn hình E-Paper");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
+
+    // Subtitle
+    lv_obj_t *subtitle = lv_label_create(scr);
+    lv_label_set_text(subtitle, "Xin chào Việt Nam!");
+    lv_obj_align(subtitle, LV_ALIGN_TOP_MID, 0, 28);
+
     // 8-level grayscale bar
-    create_grayscale_bar(scr, 10, 45, 180, 20, 8);
-    
+    create_grayscale_bar(scr, 10, 52, 180, 16, 8);
+
     // Gradient (continuous)
     lv_obj_t *gradient_box = lv_obj_create(scr);
     lv_obj_remove_style_all(gradient_box);
-    lv_obj_set_size(gradient_box, 180, 20);
-    lv_obj_set_pos(gradient_box, 10, 70);
+    lv_obj_set_size(gradient_box, 180, 16);
+    lv_obj_set_pos(gradient_box, 10, 72);
     lv_obj_set_style_bg_opa(gradient_box, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(gradient_box, lv_color_black(), 0);
     lv_obj_set_style_bg_grad_color(gradient_box, lv_color_white(), 0);
     lv_obj_set_style_bg_grad_dir(gradient_box, LV_GRAD_DIR_HOR, 0);
-    
+
     // Separator line
-    static lv_point_precise_t line_points[] = {{10, 95}, {190, 95}};
+    static lv_point_precise_t line_points[] = {{10, 96}, {190, 96}};
     lv_obj_t *line = lv_line_create(scr);
     lv_line_set_points(line, line_points, 2);
     lv_obj_set_style_line_width(line, 1, 0);
     lv_obj_set_style_line_color(line, lv_color_black(), 0);
-    
+
     // Counter section
     lv_obj_t *counter_title = lv_label_create(scr);
-    lv_label_set_text(counter_title, "Partial Refresh");
-    lv_obj_set_pos(counter_title, 10, 102);
-    
+    lv_label_set_text(counter_title, "Số lần cập nhật:");
+    lv_obj_set_pos(counter_title, 10, 106);
+
     // Counter with border
     lv_obj_t *box = lv_obj_create(scr);
-    lv_obj_set_size(box, 55, 22);
-    lv_obj_set_pos(box, 135, 100);
+    lv_obj_set_size(box, 50, 30);
+    lv_obj_set_pos(box, 140, 101);
     lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(box, 2, 0);
     lv_obj_set_style_border_color(box, lv_color_black(), 0);
     lv_obj_set_style_radius(box, 3, 0);
-    
-    counter_label = lv_label_create(scr);
+    lv_obj_set_style_pad_all(box, 0, 0);
+
+    counter_label = lv_label_create(box);
+    lv_obj_set_style_text_font(counter_label, FONT_TITLE, 0);
     lv_label_set_text(counter_label, "0");
-    lv_obj_set_pos(counter_label, 155, 103);
-    
+    lv_obj_center(counter_label);
+
     // Gray boxes at bottom with labels
-    const char *gray_labels[] = {"0%", "33%", "66%", "100%"};
+    const char *gray_labels[] = {"Đen", "Đậm", "Nhạt", "Trắng"};
     for (int i = 0; i < 4; i++) {
         lv_obj_t *gbox = lv_obj_create(scr);
         lv_obj_remove_style_all(gbox);
-        lv_obj_set_size(gbox, 42, 35);
-        lv_obj_set_pos(gbox, 8 + i * 47, 135);
-        
+        lv_obj_set_size(gbox, 42, 30);
+        lv_obj_set_pos(gbox, 8 + i * 47, 140);
+
         uint8_t gray = (255 * i) / 3;  // 0, 85, 170, 255
         lv_obj_set_style_bg_color(gbox, lv_color_make(gray, gray, gray), 0);
         lv_obj_set_style_bg_opa(gbox, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(gbox, 1, 0);
         lv_obj_set_style_border_color(gbox, lv_color_black(), 0);
-        
-        // Label below box
+
+        // Label centered below box
         lv_obj_t *lbl = lv_label_create(scr);
         lv_label_set_text(lbl, gray_labels[i]);
-        lv_obj_set_pos(lbl, 15 + i * 47, 173);
+        lv_obj_align_to(lbl, gbox, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
     }
 }
 
 void app_main(void)
 {
     ESP_LOGI(TAG, "=== Waveshare ESP32-S3-ePaper-1.54 Demo ===");
-    ESP_LOGI(TAG, "Panel: GDEY0154D67 (200x200 BW)");
+    ESP_LOGI(TAG, "Panel: GDEY0154D67 (200x200, %s)",
+             EXAMPLE_4GRAY ? "4-gray" : "BW");
     
     // Initialize board power
     board_power_init();
@@ -203,6 +232,7 @@ void app_main(void)
     
     // Configure e-paper with preset for ESP32-S3-ePaper-1.54
     epd_config_t epd_cfg = EPD_CONFIG_ESP32S3_154();
+    epd_cfg.panel.type = EPD_PANEL;
     epd_handle_t epd = NULL;
     
     esp_err_t ret = epd_init(&epd_cfg, &epd);
@@ -224,6 +254,11 @@ void app_main(void)
     lvgl_cfg.use_partial_refresh = true;
     lvgl_cfg.partial_threshold = 2000;  // Force full refresh every N partial updates
     lvgl_cfg.dither_mode = EPD_DITHER_FLOYD_STEINBERG;  // Enable grayscale dithering
+    lvgl_cfg.dither_protect_bw = true;  // Keep 1 bpp text/lines out of error diffusion
+#if EXAMPLE_4GRAY
+    lvgl_cfg.update_mode = EPD_UPDATE_FULL;  // No partial refresh in 4-gray mode
+    lvgl_cfg.use_partial_refresh = false;
+#endif
     
     lv_display_t *disp = epd_lvgl_init(&lvgl_cfg);
     if (!disp) {
@@ -252,11 +287,11 @@ void app_main(void)
     }
     
     ESP_LOGI(TAG, "Demo started with Floyd-Steinberg dithering");
-    ESP_LOGI(TAG, "Counter updates every 10 seconds");
+    ESP_LOGI(TAG, "Counter updates every %d seconds", UPDATE_INTERVAL_MS / 1000);
     
     // Main loop - update counter periodically
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(UPDATE_INTERVAL_MS));
         counter++;
         ESP_LOGI(TAG, "Update counter: %d", counter);
         
@@ -267,8 +302,8 @@ void app_main(void)
                 lv_label_set_text(counter_label, buf);
             }
             
-            // Force full refresh every 5 updates to clear ghosting
-            if (counter % 5 == 0) {
+            // Force full refresh every 5 updates to clear ghosting (BW mode)
+            if (!EXAMPLE_4GRAY && counter % 5 == 0) {
                 ESP_LOGI(TAG, "Full refresh to clear ghosting");
                 epd_lvgl_force_full_refresh(disp);
             }

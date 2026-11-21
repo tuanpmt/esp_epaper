@@ -69,6 +69,7 @@ Smart partial refresh for BW panels:
 | GDEP073E01 | 7.3" | 800x480 | 6-Color | No |
 | GDEY037F51 | 3.7" | 240x416 | 4-Color BWRY | No |
 | GDEY029T71H | 2.9" | 168x384 | BW (SSD1685) | Yes |
+| GDEY0154D67 (`EPD_PANEL_GDEY0154D67_4GRAY`) | 1.54" | 200x200 | 4-Gray | No (full refresh only) |
 
 ### Generic SSD16xx Panels
 
@@ -322,6 +323,52 @@ The component implements Floyd-Steinberg error-diffusion dithering for photo-qua
 | Blue | (0, 0, 255) | 0x05 |
 | Green | (0, 255, 0) | 0x06 |
 
+### Keeping Text Crisp (`dither_protect_bw`)
+
+Error diffusion also touches text and lines that sit next to gradients or images,
+leaving stray dots around glyphs. Enable `dither_protect_bw` so pixels that are pure
+black or pure white never receive diffused error:
+
+```c
+lvgl_cfg.dither_mode = EPD_DITHER_FLOYD_STEINBERG;
+lvgl_cfg.dither_protect_bw = true;   // costs W*H/8 bytes
+```
+
+This works best with 1 bpp fonts (every glyph pixel is pure black). Anti-aliased
+fonts (2/4 bpp) have gray edges that still get dithered on a B/W panel, so prefer
+1 bpp fonts there, or `EPD_DITHER_NONE` for text-only screens.
+
+## 4-Gray Mode (GDEY0154D67)
+
+`EPD_PANEL_GDEY0154D67_4GRAY` drives the same 1.54" panel with the 4-gray waveform
+stored in the panel OTP (as in the Good Display reference code). The framebuffer
+becomes 2 bpp (`EPD_GRAY_BLACK`, `EPD_GRAY_DARK`, `EPD_GRAY_LIGHT`, `EPD_GRAY_WHITE`)
+and LVGL output is quantized, or dithered, to those 4 levels.
+
+```c
+epd_config_t cfg = EPD_CONFIG_ESP32S3_154();
+cfg.panel.type = EPD_PANEL_GDEY0154D67_4GRAY;
+```
+
+- Every update is a full refresh; partial/fast requests fall back to full.
+- 2 bpp anti-aliased fonts map exactly onto the 4 gray levels, so text looks smooth.
+- If the two middle grays look swapped on your panel revision, swap the plane
+  mapping in `gdey0154_write_ram_4gray()`.
+
+## Fonts for E-Paper
+
+`lv_font_conv` rasterizes glyphs without hinting, so small fonts at 1 bpp end up with
+uneven stems and broken diacritics. `tools/font_conv/epd_font_conv.py` renders glyphs
+with FreeType hinting and writes a standard LVGL 9 C font (drop-in replacement):
+
+```bash
+pip install -r tools/font_conv/requirements.txt
+python tools/font_conv/epd_font_conv.py --font BeVietnamPro-Medium.ttf --size 16 \
+    --bpp 1 --preset vietnamese --name font_vn_16 --output font_vn_16.c --preview vn16.png
+```
+
+See [tools/font_conv/README.md](tools/font_conv/README.md) for options and font choice.
+
 ## Partial Refresh
 
 BW panels support partial refresh for fast updates without full-screen flashing.
@@ -362,7 +409,7 @@ See the `examples/` folder for complete examples:
 
 | Example | Board | Description |
 |---------|-------|-------------|
-| [esp32s3_epaper_154](examples/esp32s3_epaper_154) | ESP32-S3-ePaper-1.54 | 1.54" BW with grayscale dithering |
+| [esp32s3_epaper_154](examples/esp32s3_epaper_154) | ESP32-S3-ePaper-1.54 | 1.54" BW, hinted Vietnamese fonts, optional 4-gray mode |
 | [esp32s3_photopainter](examples/esp32s3_photopainter) | ESP32-S3-PhotoPainter | 7.3" 6-Color with dithering |
 | [esp32_wroom_generic](examples/esp32_wroom_generic) | ESP32-WROOM-32D | Generic SSD16xx, responsive UI |
 | [esp32_wroom_4color](examples/esp32_wroom_4color) | ESP32-WROOM-32D | 3.7" 4-Color BWRY |

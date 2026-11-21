@@ -134,6 +134,16 @@ static const epd_panel_desc_t panel_registry[EPD_PANEL_COUNT] = {
         .full_refresh_interval = 5,
         .init_data = NULL,
     },
+    // Same GDEY0154D67 panel driven in 4-gray mode (OTP 4-gray waveform).
+    // Full refresh only: partial/fast requests fall back to a full 4-gray update.
+    [EPD_PANEL_GDEY0154D67_4GRAY] = {
+        .name = "GDEY0154D67 (4-gray)",
+        .width = 200, .height = 200,
+        .color_mode = EPD_COLOR_4GRAY, .bits_per_pixel = 2,
+        .caps = EPD_CAP_GRAYSCALE,
+        .ctrl = EPD_CTRL_GDEY0154_LUT,
+        .init_data = NULL,
+    },
 
     // Generic SSD16xx BW panels (same controller, different sizes)
     [EPD_PANEL_SSD16XX_154] = {

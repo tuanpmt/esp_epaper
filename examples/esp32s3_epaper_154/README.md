@@ -38,7 +38,10 @@ idf.py -p PORT flash monitor
 
 - E-paper initialization with `EPD_CONFIG_ESP32S3_154()` preset
 - LVGL 9 integration
-- **Floyd-Steinberg dithering** for grayscale simulation on B/W panel
+- **Vietnamese text** with FreeType-hinted fonts (Be Vietnam Pro Medium, 12/16 px)
+- **Floyd-Steinberg dithering** for grayscale simulation on B/W panel, with
+  `dither_protect_bw` so 1 bpp text and lines stay crisp
+- **Optional 4-gray mode** (`idf.py menuconfig` -> E-Paper 1.54 Example -> Use 4-gray mode)
 - Partial refresh for fast updates
 - Periodic full refresh to clear ghosting
 - Board power control (GPIO6)
@@ -49,7 +52,7 @@ The example displays:
 
 1. **8-level grayscale bar** - Demonstrates dithering quality with discrete gray steps
 2. **Continuous gradient** - Shows smooth black-to-white transition using dithering
-3. **Gray boxes** - 4 boxes with different gray levels (0%, 25%, 50%, 75%)
+3. **Gray boxes** - 4 boxes with gray levels 0, 85, 170, 255 (exact levels in 4-gray mode)
 4. **Counter** - Updates every 10 seconds using partial refresh
 
 ## Usage
@@ -57,6 +60,16 @@ The example displays:
 The example displays a counter that updates every 10 seconds using partial refresh. Every 5 updates, a full refresh is performed to clear any ghosting artifacts.
 
 The grayscale dithering uses Floyd-Steinberg error diffusion to simulate gray levels on the B/W panel. This creates the illusion of more than 2 colors by varying the density of black pixels.
+
+## Fonts
+
+| File | Mode | Generated with |
+|------|------|----------------|
+| `main/font_vn_12.c`, `main/font_vn_16.c` | B/W | 1 bpp, FreeType mono hinting |
+| `main/font_vn_12_aa.c`, `main/font_vn_16_aa.c` | 4-gray | 2 bpp, light hinting |
+
+Regenerate them with `./gen_fonts.sh` (needs `pip install -r ../../tools/font_conv/requirements.txt`).
+The source font is `fonts/BeVietnamPro-Medium.ttf` (SIL Open Font License, see `fonts/OFL.txt`).
 
 ## License
 

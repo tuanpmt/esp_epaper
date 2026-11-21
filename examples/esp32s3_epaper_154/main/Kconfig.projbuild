@@ -1,0 +1,12 @@
+menu "E-Paper 1.54 Example"
+
+    config EXAMPLE_EPD_4GRAY
+        bool "Use 4-gray mode (full refresh only)"
+        default n
+        help
+            Drive the GDEY0154D67 panel in 4-gray mode using the OTP 4-gray
+            waveform. Text uses 2 bpp anti-aliased fonts and images are dithered
+            between 4 gray levels. Partial refresh is not available in this mode,
+            every update is a full refresh.
+
+endmenu

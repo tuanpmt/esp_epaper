@@ -34,6 +34,7 @@ typedef enum {
 
     // Added after the generic panels to keep existing enum values stable
     EPD_PANEL_GDEY029T71H,      // 2.9" BW 168x384 (SSD1685, sources S8..S175)
+    EPD_PANEL_GDEY0154D67_4GRAY,// 1.54" 200x200 in 4-gray mode (full refresh only)
 
     EPD_PANEL_COUNT,            // Must be BEFORE aliases!
 
@@ -68,6 +69,12 @@ typedef enum {
 #define EPD_PIXEL_ORANGE    0x4
 #define EPD_PIXEL_BLUE      0x5
 #define EPD_PIXEL_GREEN     0x6
+
+// Gray levels for EPD_COLOR_4GRAY panels (2 bits per pixel)
+#define EPD_GRAY_BLACK      0x0
+#define EPD_GRAY_DARK       0x1
+#define EPD_GRAY_LIGHT      0x2
+#define EPD_GRAY_WHITE      0x3
 
 // Dithering mode
 typedef enum {
