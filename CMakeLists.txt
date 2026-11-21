@@ -11,6 +11,7 @@ idf_component_register(
         "src/epd_round.c"
         "src/epd_par_timing.c"
         "src/epd_wf.c"
+        "src/epd_par_run.c"
         "src/panels/e0470_wf_data.c"
         "src/epd_lvgl.c"
         "src/controllers/ssd1677.c"
