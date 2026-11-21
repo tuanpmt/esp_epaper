@@ -65,6 +65,12 @@ esp_err_t epd_init(const epd_config_t *config, epd_handle_t *handle)
         return ESP_ERR_INVALID_ARG;
     }
 
+    uint16_t rot = config->panel.rotation;
+    if (rot != 0 && rot != 90 && rot != 180 && rot != 270) {
+        ESP_LOGE(TAG, "Invalid rotation %u (use 0, 90, 180 or 270)", rot);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     // Get panel descriptor from registry
     const epd_panel_desc_t *panel = epd_get_panel_desc(config->panel.type);
     if (!panel) {
@@ -170,6 +176,9 @@ esp_err_t epd_get_info(epd_handle_t handle, epd_panel_info_t *info)
     info->height = dev->height;
     info->buffer_size = dev->buffer_size;
     info->color_mode = dev->panel->color_mode;
+    info->rotation = dev->config.panel.rotation;
+    info->mirror_x = dev->config.panel.mirror_x;
+    info->mirror_y = dev->config.panel.mirror_y;
     return ESP_OK;
 }
 

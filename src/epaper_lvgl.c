@@ -57,8 +57,13 @@ typedef struct {
     uint8_t *lvgl_buf;      // RGB565 buffer for LVGL
     uint8_t *rgb_buf;       // RGB888 buffer for dithering
     uint32_t lvgl_buf_size;
-    uint16_t width;
-    uint16_t height;
+    uint16_t width;         // Native panel width (framebuffer)
+    uint16_t height;        // Native panel height (framebuffer)
+    uint16_t lv_width;      // Logical LVGL width (after rotation)
+    uint16_t lv_height;     // Logical LVGL height (after rotation)
+    uint16_t rotation;      // 0, 90, 180, 270 degrees clockwise
+    bool mirror_x;
+    bool mirror_y;
     bool force_full;
     uint32_t partial_count;
     bool partial_render_mode;  // True if using small buffer with partial rendering
@@ -205,20 +210,60 @@ static inline void set_fb_pixel(uint8_t *fb, int x, int y, int width, uint8_t co
     }
 }
 
+/*=============================================================================
+ * Rotation / Mirroring
+ *============================================================================*/
+
+static void ctx_apply_rotation(epd_lvgl_ctx_t *ctx, uint16_t rotation)
+{
+    bool swap = (rotation == 90 || rotation == 270);
+    ctx->rotation = rotation;
+    ctx->lv_width = swap ? ctx->height : ctx->width;
+    ctx->lv_height = swap ? ctx->width : ctx->height;
+}
+
+// Map a logical LVGL pixel to the native framebuffer position
+static inline void map_to_native(const epd_lvgl_ctx_t *ctx, int lx, int ly, int *px, int *py)
+{
+    const int w = ctx->width;
+    const int h = ctx->height;
+    int x, y;
+
+    switch (ctx->rotation) {
+        case 90:  x = w - 1 - ly; y = lx;          break;
+        case 180: x = w - 1 - lx; y = h - 1 - ly;  break;
+        case 270: x = ly;         y = h - 1 - lx;  break;
+        default:  x = lx;         y = ly;          break;
+    }
+    if (ctx->mirror_x) x = w - 1 - x;
+    if (ctx->mirror_y) y = h - 1 - y;
+
+    *px = x;
+    *py = y;
+}
+
+static inline void set_fb_pixel_logical(const epd_lvgl_ctx_t *ctx, uint8_t *fb,
+                                        int lx, int ly, uint8_t color)
+{
+    int px, py;
+    map_to_native(ctx, lx, ly, &px, &py);
+    set_fb_pixel(fb, px, py, ctx->width, color, ctx->color_mode);
+}
+
 static void apply_floyd_steinberg_dithering(epd_lvgl_ctx_t *ctx, uint8_t *fb)
 {
     if (!ctx->rgb_buf || !fb) return;
     
     ESP_LOGI(TAG, "Applying Floyd-Steinberg dithering...");
     
-    for (int y = 0; y < ctx->height; y++) {
+    for (int y = 0; y < ctx->lv_height; y++) {
         // Yield every 20 rows to prevent watchdog
         if (y % 20 == 0) {
             vTaskDelay(1);
         }
         
-        for (int x = 0; x < ctx->width; x++) {
-            int idx = (y * ctx->width + x) * 3;
+        for (int x = 0; x < ctx->lv_width; x++) {
+            int idx = (y * ctx->lv_width + x) * 3;
             
             // Get current pixel RGB
             int r = ctx->rgb_buf[idx + 0];
@@ -248,7 +293,7 @@ static void apply_floyd_steinberg_dithering(epd_lvgl_ctx_t *ctx, uint8_t *fb)
             }
             
             // Set pixel in framebuffer
-            set_fb_pixel(fb, x, y, ctx->width, epaper_color, ctx->color_mode);
+            set_fb_pixel_logical(ctx, fb, x, y, epaper_color);
             
             // Calculate quantization error
             int err_r = r - pal_r;
@@ -257,29 +302,29 @@ static void apply_floyd_steinberg_dithering(epd_lvgl_ctx_t *ctx, uint8_t *fb)
             
             // Distribute error to neighbors (Floyd-Steinberg)
             // Right pixel: 7/16
-            if (x + 1 < ctx->width) {
+            if (x + 1 < ctx->lv_width) {
                 int ni = idx + 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r * 7 / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g * 7 / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b * 7 / 16);
             }
             // Bottom-left pixel: 3/16
-            if (y + 1 < ctx->height && x > 0) {
-                int ni = ((y + 1) * ctx->width + x - 1) * 3;
+            if (y + 1 < ctx->lv_height && x > 0) {
+                int ni = ((y + 1) * ctx->lv_width + x - 1) * 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r * 3 / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g * 3 / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b * 3 / 16);
             }
             // Bottom pixel: 5/16
-            if (y + 1 < ctx->height) {
-                int ni = ((y + 1) * ctx->width + x) * 3;
+            if (y + 1 < ctx->lv_height) {
+                int ni = ((y + 1) * ctx->lv_width + x) * 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r * 5 / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g * 5 / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b * 5 / 16);
             }
             // Bottom-right pixel: 1/16
-            if (y + 1 < ctx->height && x + 1 < ctx->width) {
-                int ni = ((y + 1) * ctx->width + x + 1) * 3;
+            if (y + 1 < ctx->lv_height && x + 1 < ctx->lv_width) {
+                int ni = ((y + 1) * ctx->lv_width + x + 1) * 3;
                 ctx->rgb_buf[ni + 0] = clamp_byte(ctx->rgb_buf[ni + 0] + err_r / 16);
                 ctx->rgb_buf[ni + 1] = clamp_byte(ctx->rgb_buf[ni + 1] + err_g / 16);
                 ctx->rgb_buf[ni + 2] = clamp_byte(ctx->rgb_buf[ni + 2] + err_b / 16);
@@ -329,7 +374,7 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
                 uint8_t g = (g6 << 2) | (g6 >> 4);  // 6-bit to 8-bit
                 uint8_t b = (b5 << 3) | (b5 >> 2);  // 5-bit to 8-bit
                 
-                int idx = (y * ctx->width + x) * 3;
+                int idx = (y * ctx->lv_width + x) * 3;
                 ctx->rgb_buf[idx + 0] = r;
                 ctx->rgb_buf[idx + 1] = g;
                 ctx->rgb_buf[idx + 2] = b;
@@ -341,7 +386,7 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
         }
         
         // Apply dithering after all pixels collected
-        bool is_last = (area->x2 == ctx->width - 1) && (area->y2 == ctx->height - 1);
+        bool is_last = (area->x2 == ctx->lv_width - 1) && (area->y2 == ctx->lv_height - 1);
         if (is_last) {
             // Clear framebuffer first using bits_per_pixel from panel
             uint32_t fb_size = epd_calc_buffer_size(ctx->width, ctx->height, ctx->bits_per_pixel);
@@ -414,7 +459,7 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
                 }
                 
                 // Set pixel (format depends on color mode)
-                set_fb_pixel(fb, x, y, ctx->width, epaper_color, ctx->color_mode);
+                set_fb_pixel_logical(ctx, fb, x, y, epaper_color);
             }
             // Yield periodically
             if ((y % 50) == 0) {
@@ -427,7 +472,7 @@ static void epd_lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t
     ctx->fb_dirty = true;
     
     // Check if this is the last chunk (bottom-right corner)
-    bool is_last = (area->x2 >= ctx->width - 1) && (area->y2 >= ctx->height - 1);
+    bool is_last = (area->x2 >= ctx->lv_width - 1) && (area->y2 >= ctx->lv_height - 1);
     
     // Only update display when:
     // 1. Full render mode (not partial) - update every flush
@@ -482,6 +527,9 @@ lv_display_t* epd_lvgl_init(const epd_lvgl_config_t *config)
     ctx->partial_threshold = config->partial_threshold;
     ctx->width = info.width;
     ctx->height = info.height;
+    ctx->mirror_x = info.mirror_x;
+    ctx->mirror_y = info.mirror_y;
+    ctx_apply_rotation(ctx, info.rotation);
     ctx->force_full = false;
     ctx->partial_count = 0;
 
@@ -503,7 +551,9 @@ lv_display_t* epd_lvgl_init(const epd_lvgl_config_t *config)
         // No SPIRAM - use partial rendering with smaller buffer
         // Buffer for 10 lines at a time (saves memory on no-PSRAM boards)
         uint32_t partial_lines = 10;
-        uint32_t partial_buf_size = info.width * partial_lines * sizeof(uint16_t);
+        // Sized for the longer side so runtime rotation keeps 10 full lines
+        uint16_t max_side = info.width > info.height ? info.width : info.height;
+        uint32_t partial_buf_size = max_side * partial_lines * sizeof(uint16_t);
         
         ctx->lvgl_buf = heap_caps_malloc(partial_buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         if (!ctx->lvgl_buf) {
@@ -541,7 +591,7 @@ lv_display_t* epd_lvgl_init(const epd_lvgl_config_t *config)
     }
     
     // Create LVGL display
-    lv_display_t *disp = lv_display_create(info.width, info.height);
+    lv_display_t *disp = lv_display_create(ctx->lv_width, ctx->lv_height);
     if (!disp) {
         ESP_LOGE(TAG, "Failed to create display");
         if (ctx->rgb_buf) free(ctx->rgb_buf);
@@ -558,8 +608,8 @@ lv_display_t* epd_lvgl_init(const epd_lvgl_config_t *config)
         LV_DISPLAY_RENDER_MODE_PARTIAL : LV_DISPLAY_RENDER_MODE_FULL;
     lv_display_set_buffers(disp, ctx->lvgl_buf, NULL, ctx->lvgl_buf_size, render_mode);
     
-    ESP_LOGI(TAG, "LVGL display initialized: %dx%d, dither=%d, render=%s", 
-             info.width, info.height, config->dither_mode,
+    ESP_LOGI(TAG, "LVGL display initialized: %dx%d (rotation %u), dither=%d, render=%s",
+             ctx->lv_width, ctx->lv_height, ctx->rotation, config->dither_mode,
              use_partial_render ? "partial" : "full");
     
     return disp;
@@ -612,6 +662,23 @@ void epd_lvgl_refresh(lv_display_t *disp)
     if (!disp) return;
     lv_obj_invalidate(lv_screen_active());
     lv_refr_now(disp);
+}
+
+esp_err_t epd_lvgl_set_rotation(lv_display_t *disp, uint16_t rotation)
+{
+    if (!disp) return ESP_ERR_INVALID_ARG;
+    if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    epd_lvgl_ctx_t *ctx = lv_display_get_user_data(disp);
+    if (!ctx) return ESP_ERR_INVALID_STATE;
+
+    ctx_apply_rotation(ctx, rotation);
+    if (ctx->rgb_buf) {
+        memset(ctx->rgb_buf, 255, (size_t)ctx->width * ctx->height * 3);
+    }
+    lv_display_set_resolution(disp, ctx->lv_width, ctx->lv_height);
+    return ESP_OK;
 }
 
 epd_handle_t epd_lvgl_get_epd(lv_display_t *disp)

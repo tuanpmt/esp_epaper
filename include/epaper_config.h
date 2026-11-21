@@ -94,9 +94,15 @@ typedef struct {
 } epd_pin_config_t;
 
 // SPI configuration
+// If the SPI host is already initialized (e.g. shared with an SD card), the
+// driver reuses that bus and only adds its own device; pins.sck/mosi are then
+// not used.
 typedef struct {
     int host;                   // SPI host (SPI2_HOST, SPI3_HOST)
     int speed_hz;               // Clock speed
+    uint32_t max_transfer_size; // Max bytes per SPI transaction in bulk writes (0 = 4096)
+    bool cs_per_transfer;       // Toggle CS between bulk transactions (some controllers
+                                // lose sync on long continuous bursts)
 } epd_spi_config_t;
 
 // Panel configuration
@@ -104,9 +110,9 @@ typedef struct {
     epd_panel_type_t type;
     uint16_t width;             // Override width (0 = use default)
     uint16_t height;            // Override height (0 = use default)
-    bool mirror_x;
-    bool mirror_y;
-    uint8_t rotation;           // 0, 90, 180, 270
+    bool mirror_x;              // Mirror horizontally (LVGL layer)
+    bool mirror_y;              // Mirror vertically (LVGL layer)
+    uint16_t rotation;          // 0, 90, 180, 270 degrees clockwise (LVGL layer)
 } epd_panel_config_t;
 
 // Full device configuration
@@ -116,130 +122,86 @@ typedef struct {
     epd_panel_config_t panel;
 } epd_config_t;
 
+/*=============================================================================
+ * Pin presets (board wiring), independent of the panel type
+ *
+ * Combine any pin preset with any panel:
+ *   epd_config_t cfg = {
+ *       .pins  = EPD_PINS_WAVESHARE_ESP32_DRIVER(),
+ *       .spi   = EPD_SPI_CONFIG(SPI2_HOST, 4000000),
+ *       .panel = EPD_PANEL_CONFIG(EPD_PANEL_SSD16XX_290),
+ *   };
+ * or override a field of a full preset:
+ *   epd_config_t cfg = EPD_CONFIG_ESP32_WROOM();
+ *   cfg.panel.type = EPD_PANEL_SSD16XX_420;
+ *============================================================================*/
+
+#define EPD_PINS(_busy, _rst, _dc, _cs, _sck, _mosi) { \
+    .busy = (_busy), .rst = (_rst), .dc = (_dc), \
+    .cs = (_cs), .sck = (_sck), .mosi = (_mosi), \
+}
+
+// Good Display ESP32-WROOM-32D development board
+#define EPD_PINS_GOODDISPLAY_ESP32()        EPD_PINS(13, 12, 14, 27, 18, 23)
+// Waveshare ESP32-S3-ePaper-1.54
+#define EPD_PINS_ESP32S3_EPAPER_154()       EPD_PINS(8, 9, 10, 11, 12, 13)
+// Waveshare ESP32-S3-PhotoPainter (7.3")
+#define EPD_PINS_ESP32S3_PHOTOPAINTER()     EPD_PINS(13, 12, 8, 9, 10, 11)
+// Waveshare e-Paper ESP32 Driver Board
+#define EPD_PINS_WAVESHARE_ESP32_DRIVER()   EPD_PINS(25, 26, 27, 15, 13, 14)
+
+#define EPD_SPI_CONFIG(_host, _speed_hz) { \
+    .host = (_host), .speed_hz = (_speed_hz), \
+    .max_transfer_size = 0, .cs_per_transfer = false, \
+}
+
+#define EPD_PANEL_CONFIG(_type) { \
+    .type = (_type), .width = 0, .height = 0, \
+    .mirror_x = false, .mirror_y = false, .rotation = 0, \
+}
+
+/*=============================================================================
+ * Full board presets (pins + SPI + panel)
+ *============================================================================*/
+
 // Default configuration macro (ESP32-WROOM-32D)
 #define EPD_CONFIG_DEFAULT() { \
-    .pins = { \
-        .busy = EPD_DEFAULT_PIN_BUSY, \
-        .rst = EPD_DEFAULT_PIN_RST, \
-        .dc = EPD_DEFAULT_PIN_DC, \
-        .cs = EPD_DEFAULT_PIN_CS, \
-        .sck = EPD_DEFAULT_PIN_SCK, \
-        .mosi = EPD_DEFAULT_PIN_MOSI, \
-    }, \
-    .spi = { \
-        .host = EPD_DEFAULT_SPI_HOST, \
-        .speed_hz = EPD_DEFAULT_SPI_SPEED, \
-    }, \
-    .panel = { \
-        .type = EPD_PANEL_GDEY0266T90, \
-        .width = 0, \
-        .height = 0, \
-        .mirror_x = false, \
-        .mirror_y = false, \
-        .rotation = 0, \
-    }, \
+    .pins = EPD_PINS(EPD_DEFAULT_PIN_BUSY, EPD_DEFAULT_PIN_RST, EPD_DEFAULT_PIN_DC, \
+                     EPD_DEFAULT_PIN_CS, EPD_DEFAULT_PIN_SCK, EPD_DEFAULT_PIN_MOSI), \
+    .spi = EPD_SPI_CONFIG(EPD_DEFAULT_SPI_HOST, EPD_DEFAULT_SPI_SPEED), \
+    .panel = EPD_PANEL_CONFIG(EPD_PANEL_GDEY0266T90), \
 }
 
 // ESP32-S3-ePaper-1.54 board configuration
 // Pinout: DC=10, CS=11, SCK=12, MOSI=13, RST=9, BUSY=8
 #define EPD_CONFIG_ESP32S3_154() { \
-    .pins = { \
-        .busy = 8, \
-        .rst = 9, \
-        .dc = 10, \
-        .cs = 11, \
-        .sck = 12, \
-        .mosi = 13, \
-    }, \
-    .spi = { \
-        .host = SPI2_HOST, \
-        .speed_hz = 40000000, \
-    }, \
-    .panel = { \
-        .type = EPD_PANEL_GDEY0154D67, \
-        .width = 0, \
-        .height = 0, \
-        .mirror_x = false, \
-        .mirror_y = false, \
-        .rotation = 0, \
-    }, \
+    .pins = EPD_PINS_ESP32S3_EPAPER_154(), \
+    .spi = EPD_SPI_CONFIG(SPI2_HOST, 40000000), \
+    .panel = EPD_PANEL_CONFIG(EPD_PANEL_GDEY0154D67), \
 }
 
-// 7.3" 6-Color E-Paper configuration (800x480)
-// Adjust pins according to your board
+// 7.3" 6-Color E-Paper configuration (800x480), ESP32-S3-PhotoPainter pinout
 #define EPD_CONFIG_73_6COLOR() { \
-    .pins = { \
-        .busy = 13, \
-        .rst = 12, \
-        .dc = 8, \
-        .cs = 9, \
-        .sck = 10, \
-        .mosi = 11, \
-    }, \
-    .spi = { \
-        .host = SPI2_HOST, \
-        .speed_hz = 10000000, \
-    }, \
-    .panel = { \
-        .type = EPD_PANEL_GDEP073E01, \
-        .width = 0, \
-        .height = 0, \
-        .mirror_x = false, \
-        .mirror_y = false, \
-        .rotation = 0, \
-    }, \
+    .pins = EPD_PINS_ESP32S3_PHOTOPAINTER(), \
+    .spi = EPD_SPI_CONFIG(SPI2_HOST, 10000000), \
+    .panel = EPD_PANEL_CONFIG(EPD_PANEL_GDEP073E01), \
 }
 
 // Good Display ESP32-WROOM-32D development board
 // Default panel: 2.66" BW (152x296)
 // Pinout: BUSY=13, RST=12, DC=14, CS=27, SCK=18, MOSI=23
 #define EPD_CONFIG_ESP32_WROOM() { \
-    .pins = { \
-        .busy = 13, \
-        .rst = 12, \
-        .dc = 14, \
-        .cs = 27, \
-        .sck = 18, \
-        .mosi = 23, \
-    }, \
-    .spi = { \
-        .host = SPI2_HOST, \
-        .speed_hz = 10000000, \
-    }, \
-    .panel = { \
-        .type = EPD_PANEL_SSD16XX_266, \
-        .width = 0, \
-        .height = 0, \
-        .mirror_x = false, \
-        .mirror_y = false, \
-        .rotation = 0, \
-    }, \
+    .pins = EPD_PINS_GOODDISPLAY_ESP32(), \
+    .spi = EPD_SPI_CONFIG(SPI2_HOST, 10000000), \
+    .panel = EPD_PANEL_CONFIG(EPD_PANEL_SSD16XX_266), \
 }
 
 // Good Display ESP32-WROOM-32D + 3.7" 4-Color BWRY (GDEY037F51)
 // 240x416 resolution, no PSRAM required (streaming mode)
-// Pinout: BUSY=13, RST=12, DC=14, CS=27, SCK=18, MOSI=23
 #define EPD_CONFIG_ESP32_WROOM_4COLOR() { \
-    .pins = { \
-        .busy = 13, \
-        .rst = 12, \
-        .dc = 14, \
-        .cs = 27, \
-        .sck = 18, \
-        .mosi = 23, \
-    }, \
-    .spi = { \
-        .host = SPI2_HOST, \
-        .speed_hz = 10000000, \
-    }, \
-    .panel = { \
-        .type = EPD_PANEL_GDEY037F51, \
-        .width = 0, \
-        .height = 0, \
-        .mirror_x = false, \
-        .mirror_y = false, \
-        .rotation = 0, \
-    }, \
+    .pins = EPD_PINS_GOODDISPLAY_ESP32(), \
+    .spi = EPD_SPI_CONFIG(SPI2_HOST, 10000000), \
+    .panel = EPD_PANEL_CONFIG(EPD_PANEL_GDEY037F51), \
 }
 
 #endif // _EPAPER_CONFIG_H_

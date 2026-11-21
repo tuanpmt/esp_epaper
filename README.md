@@ -68,6 +68,7 @@ Smart partial refresh for BW panels:
 | GDEY0154D67 | 1.54" | 200x200 | BW | Yes (custom LUT) |
 | GDEP073E01 | 7.3" | 800x480 | 6-Color | No |
 | GDEY037F51 | 3.7" | 240x416 | 4-Color BWRY | No |
+| GDEY029T71H | 2.9" | 168x384 | BW (SSD1685) | Yes |
 
 ### Generic SSD16xx Panels
 
@@ -79,7 +80,7 @@ Adding new BW panels requires only **1 line of code** - see [ADDING_PANELS.md](A
 | SSD16XX_213 | 2.13" | 122x250 | GDEY0213B74, GDEM0213I61 |
 | SSD16XX_266 | 2.66" | 152x296 | GDEY0266T90, GDEY0266T90H |
 | SSD16XX_270 | 2.7" | 176x264 | GDEY027T91, GDEM027Q72 |
-| SSD16XX_290 | 2.9" | 128x296 | GDEY029T94, GDEY029T71H |
+| SSD16XX_290 | 2.9" | 128x296 | GDEY029T94 |
 | SSD16XX_370 | 3.7" | 280x480 | GDEY037T03 |
 | SSD16XX_420 | 4.2" | 400x300 | GDEY042T81, GDEQ0426T82 |
 
@@ -191,27 +192,50 @@ epd_config_t cfg = EPD_CONFIG_ESP32_WROOM_4COLOR();
 
 ### Custom Configuration
 
+Board wiring (pins), SPI settings and panel type are configured independently,
+so any board can be combined with any supported panel:
+
 ```c
 epd_config_t cfg = {
-    .pins = {
-        .busy = GPIO_NUM_8,
-        .rst = GPIO_NUM_9,
-        .dc = GPIO_NUM_10,
-        .cs = GPIO_NUM_11,
-        .sck = GPIO_NUM_12,
-        .mosi = GPIO_NUM_13,
-    },
-    .spi = {
-        .host = SPI2_HOST,
-        .speed_hz = 10000000,  // 10MHz
-    },
-    .panel = {
-        .type = EPD_PANEL_GDEY0154D67,
-        .width = 0,   // 0 = use panel default
-        .height = 0,
-    },
+    .pins  = EPD_PINS_WAVESHARE_ESP32_DRIVER(),   // or EPD_PINS(busy, rst, dc, cs, sck, mosi)
+    .spi   = EPD_SPI_CONFIG(SPI2_HOST, 4000000),
+    .panel = EPD_PANEL_CONFIG(EPD_PANEL_SSD16XX_290),
 };
+
+// Or start from a full preset and override fields
+epd_config_t cfg2 = EPD_CONFIG_ESP32_WROOM();
+cfg2.panel.type = EPD_PANEL_SSD16XX_420;
 ```
+
+Pin presets: `EPD_PINS_GOODDISPLAY_ESP32()`, `EPD_PINS_ESP32S3_EPAPER_154()`,
+`EPD_PINS_ESP32S3_PHOTOPAINTER()`, `EPD_PINS_WAVESHARE_ESP32_DRIVER()`.
+
+If the SPI host is already initialized by your application (e.g. shared with an
+SD card), the driver reuses that bus and only adds its own device.
+
+SPI options:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `speed_hz` | - | SPI clock. Lower it first if the image is corrupted |
+| `max_transfer_size` | 0 (= 4096) | Max bytes per SPI transaction in bulk RAM writes |
+| `cs_per_transfer` | false | Toggle CS between bulk transactions (for controllers that lose sync on long bursts) |
+
+### Rotation and Mirroring
+
+Set `panel.rotation` (0, 90, 180, 270 degrees clockwise) and `panel.mirror_x` /
+`panel.mirror_y`. They are applied by the LVGL layer: for 90/270 the LVGL
+resolution is swapped (e.g. 800x480 becomes 480x800). Keep `width`/`height` at
+the panel's native values; do not swap them to rotate.
+
+```c
+epd_config_t cfg = EPD_CONFIG_73_6COLOR();
+cfg.panel.rotation = 90;      // Portrait 480x800
+// ...
+epd_lvgl_set_rotation(disp, 180);  // Change at runtime, then re-layout the UI
+```
+
+Raw buffers passed to `epd_update()` are always in native panel orientation.
 
 ## Update Modes
 
@@ -376,6 +400,7 @@ void epd_lvgl_refresh(lv_display_t *disp);
 void epd_lvgl_force_full_refresh(lv_display_t *disp);
 void epd_lvgl_set_update_mode(lv_display_t *disp, epd_update_mode_t mode);
 void epd_lvgl_set_dither_mode(lv_display_t *disp, epd_dither_mode_t mode);
+esp_err_t epd_lvgl_set_rotation(lv_display_t *disp, uint16_t rotation);
 ```
 
 ## Adding New Panels

@@ -73,6 +73,18 @@ void epd_lvgl_force_full_refresh(lv_display_t *disp);
 void epd_lvgl_refresh(lv_display_t *disp);
 
 /**
+ * @brief Change display rotation at runtime
+ *
+ * The LVGL resolution is swapped for 90/270, so re-layout the UI afterwards.
+ * Initial rotation and mirroring come from epd_config_t.panel.
+ *
+ * @param disp LVGL display
+ * @param rotation 0, 90, 180 or 270 degrees clockwise
+ * @return ESP_OK, or ESP_ERR_INVALID_ARG for other values
+ */
+esp_err_t epd_lvgl_set_rotation(lv_display_t *disp, uint16_t rotation);
+
+/**
  * @brief Get e-paper handle from display
  */
 epd_handle_t epd_lvgl_get_epd(lv_display_t *disp);

@@ -6,7 +6,7 @@
 
 static const char *TAG = "epd_spi";
 
-#define SPI_MAX_CHUNK_SIZE  4096  // 4KB per transfer (safe for all ESP32 variants)
+#define SPI_DEFAULT_CHUNK_SIZE  4096  // 4KB per transfer (safe for all ESP32 variants)
 
 esp_err_t epd_spi_init(epd_spi_t *spi, const epd_pin_config_t *pins, const epd_spi_config_t *spi_cfg)
 {
@@ -32,6 +32,8 @@ esp_err_t epd_spi_init(epd_spi_t *spi, const epd_pin_config_t *pins, const epd_s
     spi->pin_rst = pins->rst;
     spi->pin_busy = pins->busy;
     spi->pin_cs = pins->cs;
+    spi->chunk_size = spi_cfg->max_transfer_size ? spi_cfg->max_transfer_size : SPI_DEFAULT_CHUNK_SIZE;
+    spi->cs_per_transfer = spi_cfg->cs_per_transfer;
     
     // Set initial state
     gpio_set_level(pins->cs, 1);
@@ -45,7 +47,7 @@ esp_err_t epd_spi_init(epd_spi_t *spi, const epd_pin_config_t *pins, const epd_s
         .sclk_io_num = pins->sck,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = SPI_MAX_CHUNK_SIZE,  // Match chunk size
+        .max_transfer_sz = spi->chunk_size,  // Match chunk size
     };
     
     esp_err_t ret = spi_bus_initialize(spi_cfg->host, &buscfg, SPI_DMA_CH_AUTO);
@@ -117,13 +119,18 @@ void epd_spi_write_data_bulk(epd_spi_t *spi, const uint8_t *data, uint32_t len)
     // Send in chunks to avoid SPI transfer limit
     uint32_t offset = 0;
     while (offset < len) {
-        uint32_t chunk_size = (len - offset > SPI_MAX_CHUNK_SIZE) ? SPI_MAX_CHUNK_SIZE : (len - offset);
+        uint32_t chunk_size = (len - offset > spi->chunk_size) ? spi->chunk_size : (len - offset);
         spi_transaction_t t = {
             .length = chunk_size * 8,
             .tx_buffer = data + offset,
         };
         spi_device_polling_transmit(spi->spi, &t);
         offset += chunk_size;
+
+        if (spi->cs_per_transfer && offset < len) {
+            gpio_set_level(spi->pin_cs, 1);
+            gpio_set_level(spi->pin_cs, 0);
+        }
     }
     
     gpio_set_level(spi->pin_cs, 1);

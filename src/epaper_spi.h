@@ -12,6 +12,8 @@ typedef struct {
     int pin_rst;
     int pin_busy;
     int pin_cs;
+    uint32_t chunk_size;        // Max bytes per bulk transaction
+    bool cs_per_transfer;       // Toggle CS between bulk transactions
 } epd_spi_t;
 
 esp_err_t epd_spi_init(epd_spi_t *spi, const epd_pin_config_t *pins, const epd_spi_config_t *spi_cfg);
