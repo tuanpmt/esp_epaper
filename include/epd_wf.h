@@ -97,6 +97,59 @@ void epd_wf_trans_plane(const uint8_t *cur, const uint8_t *next, size_t plane_st
 void epd_wf_phase_tables(const epd_wf_phases_t *w, int phase, uint8_t t[4][256]);
 void epd_wf_phase_tp(const uint8_t t[4][256], const uint8_t *tp, size_t tp_stride, uint8_t *out, size_t out_stride,
                      epd_rect_t band);
+// Drive rule for pixels whose level does not change, as the vendor driver's
+// MODE_SKIP_UNCHANGED (display/output_common/lut.c, find_lut_functions):
+// a differential update must not drive a pixel that keeps its level, or each
+// partial refresh pushes the unchanged grays one way (DU: 1..7 darker, 8..14
+// lighter, every run) and the DC builds up on the panel.
+typedef enum {
+    EPD_WF_DRIVE_ALL,           // the table as is: full refresh (GC16; GL16 non-differential)
+    EPD_WF_SKIP_SAME,           // no drive where from == to
+    EPD_WF_SKIP_SAME_KEEP_BLACK,// DU: as SKIP_SAME, black -> black keeps the table's drive
+    EPD_WF_SKIP_SAME_GL16,      // GL16 differential: SKIP_SAME; a black target only darkens;
+                                // black -> black darkens in the last four white -> black darken phases
+} epd_wf_rule_t;
+
+// Rule for a refresh mode and table (the vendor epd_refresh.cc Draw routing:
+// GC16 and plain GL16 are full draws, DU is differential and keeps black)
+epd_wf_rule_t epd_wf_rule_for(epd_mode_t m, epd_wf_kind_t k);
+// One phase of the table with the rule applied: d[to][from / 4], table format
+void epd_wf_phase_data(const epd_wf_phases_t *w, int phase, epd_wf_rule_t r, uint8_t d[EPD_WF_LEVELS][4]);
+void epd_wf_pair_lut_rule(const epd_wf_phases_t *w, int phase, epd_wf_rule_t r, uint8_t *lut);
+bool epd_wf_phase_same_rule(const epd_wf_phases_t *w, epd_wf_rule_t r, int a, int b);
+// Per level, the pixels of the band whose level does not change (from the
+// pair plane). Both take band.x and band.w even.
+void epd_wf_same_hist(const uint16_t *pp, size_t pp_stride, epd_rect_t band, uint32_t hist[EPD_WF_LEVELS]);
+// Smallest rectangle inside band holding every changed pixel (w = 0: none)
+epd_rect_t epd_wf_changed_box(const uint16_t *pp, size_t pp_stride, epd_rect_t band);
+
+typedef void (*epd_wf_pp_kernel_t)(const uint8_t *lut, const uint16_t *pp, size_t pp_stride, uint8_t *out,
+                                   size_t out_stride, epd_rect_t band);
+
+// One refresh through the pair-plane path: builds the rule's LUT when the
+// phase needs a new one, runs the kernel, and counts the drive the LUT gives
+// to pixels that keep their level (from the histogram of the pair plane).
+typedef struct {
+    const epd_wf_phases_t *w;
+    epd_wf_rule_t rule;
+    uint8_t *lut;               // EPD_WF_PAIR_LUT_SIZE, 4-byte aligned
+    const uint16_t *pp;
+    size_t pp_stride;
+    epd_rect_t band;
+    epd_wf_pp_kernel_t kernel;
+    int lut_phase;              // phase the LUT holds, -1: none
+    uint32_t hist[EPD_WF_LEVELS];
+    uint32_t phase_idle, phase_hold;    // of the last computed phase
+    uint64_t idle_drive;        // pixel-phases of drive on unchanged pixels of levels 1..15
+    uint64_t black_hold;        // pixel-phases of drive on unchanged black pixels
+} epd_wf_job_t;
+
+void epd_wf_job_begin(epd_wf_job_t *j, const epd_wf_phases_t *w, epd_wf_rule_t rule, uint8_t *lut,
+                      const uint16_t *pp, size_t pp_stride, epd_rect_t band, epd_wf_pp_kernel_t kernel);
+// Phase bus bytes into out. false: same bytes as the previous phase (out
+// untouched; scan the previous buffer again). Counts the phase either way.
+bool epd_wf_job_phase(epd_wf_job_t *j, int phase, uint8_t *out, size_t out_stride);
+
 // After a successful refresh: cur = next inside the band.
 void epd_wf_commit(uint8_t *cur, const uint8_t *next, size_t plane_stride, epd_rect_t band);
 // Grow a band to whole bus bytes (x and w multiples of 4) inside pan_w x pan_h.

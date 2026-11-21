@@ -385,3 +385,190 @@ epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid)
         return EPD_WF_GC16;
     }
 }
+
+// ---- unchanged-pixel rules ----
+// Own implementation of the behaviour of the vendor driver's
+// MODE_SKIP_UNCHANGED LUT builders (display/output_common/lut.c:450-480,
+// find_lut_functions at :568-590): only the drive decisions are mirrored.
+
+epd_wf_rule_t epd_wf_rule_for(epd_mode_t m, epd_wf_kind_t k)
+{
+    // epd_refresh.cc:291-297: a full refresh, GC16 and a non-differential GL16
+    // use epd_hl_update_screen_full (no skip); the rest goes through
+    // epd_hl_update_area (highlevel.c:247, MODE_SKIP_UNCHANGED)
+    if (m == EPD_M_FULL_CLEAN || m == EPD_M_GRAY) {
+        return EPD_WF_DRIVE_ALL;
+    }
+    switch (k) {
+    case EPD_WF_DU:
+    case EPD_WF_DU_FAST:
+    case EPD_WF_DU_SHORT:
+        return EPD_WF_SKIP_SAME_KEEP_BLACK;
+    case EPD_WF_GL16:
+    case EPD_WF_GL16_TRIM:
+        return EPD_WF_SKIP_SAME_GL16;
+    default:
+        return EPD_WF_DRIVE_ALL;
+    }
+}
+
+static inline int act_of(const uint8_t d[EPD_WF_LEVELS][4], int from, int to)
+{
+    return (d[to][from / 4] >> (6 - 2 * (from % 4))) & 3;
+}
+
+static inline void act_set(uint8_t d[EPD_WF_LEVELS][4], int from, int to, int a)
+{
+    const int sh = 6 - 2 * (from % 4);
+    d[to][from / 4] = (uint8_t)((d[to][from / 4] & ~(3 << sh)) | (a << sh));
+}
+
+// Phase p is one of the last four phases where the table darkens white -> black
+static bool late_black_darken(const epd_wf_phases_t *w, int p)
+{
+    if (epd_wf_action(w, p, 15, 0) != 1) {
+        return false;
+    }
+    int after = 0;
+    for (int q = p + 1; q < w->phases; q++) {
+        after += epd_wf_action(w, q, 15, 0) == 1;
+    }
+    return after < 4;
+}
+
+void epd_wf_phase_data(const epd_wf_phases_t *w, int phase, epd_wf_rule_t r, uint8_t d[EPD_WF_LEVELS][4])
+{
+    memcpy(d, w->lut + (size_t)phase * EPD_WF_LEVELS * 4, EPD_WF_LEVELS * 4);
+    if (r == EPD_WF_DRIVE_ALL) {
+        return;
+    }
+    for (int g = r == EPD_WF_SKIP_SAME_KEEP_BLACK ? 1 : 0; g < EPD_WF_LEVELS; g++) {
+        act_set(d, g, g, 0);
+    }
+    if (r == EPD_WF_SKIP_SAME_GL16) {
+        for (int f = 1; f < EPD_WF_LEVELS; f++) {
+            if (act_of(d, f, 0) != 1) {
+                act_set(d, f, 0, 0);    // a black target never lightens
+            }
+        }
+        if (late_black_darken(w, phase)) {
+            act_set(d, 0, 0, 1);
+        }
+    }
+}
+
+void epd_wf_pair_lut_rule(const epd_wf_phases_t *w, int phase, epd_wf_rule_t r, uint8_t *lut)
+{
+    uint8_t d[EPD_WF_LEVELS][4];
+    epd_wf_phase_data(w, phase, r, d);
+    const epd_wf_phases_t one = {.phases = 1, .lut = &d[0][0]};
+    epd_wf_pair_lut(&one, 0, lut);
+}
+
+bool epd_wf_phase_same_rule(const epd_wf_phases_t *w, epd_wf_rule_t r, int a, int b)
+{
+    uint8_t da[EPD_WF_LEVELS][4], db[EPD_WF_LEVELS][4];
+    epd_wf_phase_data(w, a, r, da);
+    epd_wf_phase_data(w, b, r, db);
+    return memcmp(da, db, sizeof(da)) == 0;
+}
+
+// Both take band.x and band.w even (whole pair-plane elements), as every
+// band of the backends (multiples of 4). One pair-plane element is two
+// pixels: cur byte in bits 15:8, next byte in bits 7:0, left pixel high nibble.
+void epd_wf_same_hist(const uint16_t *pp, size_t pp_stride, epd_rect_t band, uint32_t hist[EPD_WF_LEVELS])
+{
+    memset(hist, 0, sizeof(uint32_t) * EPD_WF_LEVELS);
+    if (band.w <= 0 || band.h <= 0) {
+        return;
+    }
+    const size_t n = (size_t)band.w / 2;
+    for (int y = band.y; y < band.y + band.h; y++) {
+        const uint16_t *p = pp + (size_t)y * pp_stride + (size_t)band.x / 2;
+        for (size_t i = 0; i < n; i++) {
+            const uint32_t v = p[i];
+            const uint32_t d = (v >> 8) ^ (v & 0xFF);
+            if (d == 0) {           // both pixels keep their level: the common case
+                hist[v >> 12]++;
+                hist[(v >> 8) & 15]++;
+            } else {
+                if (!(d & 0xF0)) {
+                    hist[v >> 12]++;
+                }
+                if (!(d & 0x0F)) {
+                    hist[(v >> 8) & 15]++;
+                }
+            }
+        }
+    }
+}
+
+epd_rect_t epd_wf_changed_box(const uint16_t *pp, size_t pp_stride, epd_rect_t band)
+{
+    int x0 = INT32_MAX, y0 = -1, x1 = -1, y1 = -1;
+    const int n = band.w > 0 ? band.w / 2 : 0;
+    for (int y = band.y; y < band.y + band.h && n > 0; y++) {
+        const uint16_t *p = pp + (size_t)y * pp_stride + (size_t)band.x / 2;
+        int i = 0;
+        while (i < n && (p[i] >> 8) == (p[i] & 0xFF)) {
+            i++;
+        }
+        if (i == n) {
+            continue;   // row unchanged
+        }
+        int k = n - 1;
+        while ((p[k] >> 8) == (p[k] & 0xFF)) {
+            k--;
+        }
+        const int l = band.x + 2 * i + (((p[i] >> 8) ^ p[i]) & 0xF0 ? 0 : 1);
+        const int r = band.x + 2 * k + (((p[k] >> 8) ^ p[k]) & 0x0F ? 1 : 0);
+        x0 = l < x0 ? l : x0;
+        x1 = r > x1 ? r : x1;
+        y0 = y0 < 0 ? y : y0;
+        y1 = y;
+    }
+    if (x1 < 0) {
+        return (epd_rect_t){band.x, band.y, 0, 0};
+    }
+    return (epd_rect_t){(int16_t)x0, (int16_t)y0, (int16_t)(x1 - x0 + 1), (int16_t)(y1 - y0 + 1)};
+}
+
+void epd_wf_job_begin(epd_wf_job_t *j, const epd_wf_phases_t *w, epd_wf_rule_t rule, uint8_t *lut,
+                      const uint16_t *pp, size_t pp_stride, epd_rect_t band, epd_wf_pp_kernel_t kernel)
+{
+    memset(j, 0, sizeof(*j));
+    j->w = w;
+    j->rule = rule;
+    j->lut = lut;
+    j->pp = pp;
+    j->pp_stride = pp_stride;
+    j->band = band;
+    j->kernel = kernel;
+    j->lut_phase = -1;
+    epd_wf_same_hist(pp, pp_stride, band, j->hist);
+}
+
+bool epd_wf_job_phase(epd_wf_job_t *j, int phase, uint8_t *out, size_t out_stride)
+{
+    const bool reuse = phase > 0 && epd_wf_phase_same_rule(j->w, j->rule, phase, phase - 1);
+    if (!reuse) {
+        if (j->lut_phase < 0 || !epd_wf_phase_same_rule(j->w, j->rule, phase, j->lut_phase)) {
+            epd_wf_pair_lut_rule(j->w, phase, j->rule, j->lut);
+            j->lut_phase = phase;
+        }
+        // Read back from the LUT the kernel uses: entry (g g, g g) holds the
+        // code of a pixel that stays at level g
+        j->phase_idle = 0;
+        j->phase_hold = j->lut[0] & 3 ? j->hist[0] : 0;
+        for (int g = 1; g < EPD_WF_LEVELS; g++) {
+            const uint32_t b = (uint32_t)g * 0x11u;
+            if (j->lut[(b << 8) | b] & 3) {
+                j->phase_idle += j->hist[g];
+            }
+        }
+        j->kernel(j->lut, j->pp, j->pp_stride, out, out_stride, j->band);
+    }
+    j->idle_drive += j->phase_idle;
+    j->black_hold += j->phase_hold;
+    return !reuse;
+}
