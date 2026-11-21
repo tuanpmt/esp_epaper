@@ -277,8 +277,46 @@ static void test_sched_intent_waits_for_its_frame(void)
     CHECK(epd_sched_next(&s, 10, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_PARTIAL);
 }
 
+// A GRAY run needs the gray planes, which the LVGL task quantizes on demand:
+// next() asks once (EPD_ACT_NEED_GRAY), then waits for epd_sched_gray_ready().
+static void test_sched_gray_waits_for_planes(void)
+{
+    epd_sched_t s;
+    epd_act_t a;
+    epd_sched_init(&s, W, H, 8, TMO);
+    epd_sched_request(&s, EPD_M_GRAY, 4);
+    epd_sched_frame_end(&s);
+    CHECK(epd_sched_next(&s, 0, &a) && a.kind == EPD_ACT_NEED_GRAY);
+    CHECK(!epd_sched_next(&s, 0, &a));                 // asked once only
+    CHECK(epd_sched_wait_ms(&s, 0) == UINT32_MAX);     // no polling while waiting
+    CHECK(!epd_sched_idle(&s));
+    epd_sched_gray_ready(&s);
+    CHECK(epd_sched_next(&s, 0, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_GRAY);
+    CHECK(is_full_screen(&a));
+    epd_sched_done(&s, 100);
+    CHECK(epd_sched_next(&s, 100, &a) && a.kind == EPD_ACT_COMMIT && a.seq == 4);
+
+    // Planes are per run: the next GRAY asks again
+    epd_sched_request(&s, EPD_M_GRAY, 5);
+    epd_sched_frame_end(&s);
+    CHECK(epd_sched_next(&s, 100, &a) && a.kind == EPD_ACT_NEED_GRAY);
+
+    // A frame rendered after the planes were made makes them stale: ask again
+    epd_sched_gray_ready(&s);
+    const epd_rect_t r = R(0, 0, 16, 8);
+    epd_sched_frame(&s, &r, 1);
+    CHECK(epd_sched_next(&s, 100, &a) && a.kind == EPD_ACT_NEED_GRAY);
+
+    // A FULL_CLEAN while waiting upgrades the run; no gray planes needed
+    epd_sched_request(&s, EPD_M_FULL_CLEAN, 6);
+    epd_sched_frame_end(&s);
+    CHECK(epd_sched_next(&s, 100, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_FULL_CLEAN);
+    CHECK(a.n == 1 && is_full_screen(&a));
+}
+
 int main(void)
 {
+    test_sched_gray_waits_for_planes();
     test_sched_intent_waits_for_its_frame();
     test_sched_frame_without_intent_is_fast_seq0();
     test_sched_intent_without_frame_uses_full_screen();

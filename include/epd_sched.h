@@ -16,7 +16,9 @@ extern "C" {
 
 #define EPD_SCHED_MAX_RECTS 8
 
-typedef enum { EPD_ACT_NONE, EPD_ACT_START, EPD_ACT_COMMIT, EPD_ACT_REINIT } epd_act_kind_t;
+// EPD_ACT_NEED_GRAY: a GRAY run is due; the caller must produce the gray
+// planes from the current image and then call epd_sched_gray_ready().
+typedef enum { EPD_ACT_NONE, EPD_ACT_START, EPD_ACT_COMMIT, EPD_ACT_REINIT, EPD_ACT_NEED_GRAY } epd_act_kind_t;
 
 typedef struct {
     epd_act_kind_t kind;
@@ -40,6 +42,8 @@ typedef struct {
     epd_mode_t mode;
     uint32_t seq;
     bool force_full;
+    bool gray_asked;            // NEED_GRAY reported for the pending run
+    bool gray_ready;            // gray planes match the current image
     // in flight
     bool busy;
     uint32_t start_ms;
@@ -59,6 +63,7 @@ void epd_sched_request(epd_sched_t *s, epd_mode_t mode, uint32_t seq);          
 // areas): pending intents may start now. Until then a run carrying an intent
 // never starts, so an intent never goes out with an older image.
 void epd_sched_frame_end(epd_sched_t *s);
+void epd_sched_gray_ready(epd_sched_t *s);       // gray planes made after NEED_GRAY
 void epd_sched_force_full(epd_sched_t *s);       // invert changed / unpark / first frame
 void epd_sched_done(epd_sched_t *s, uint32_t now_ms);                              // panel finished
 bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out);             // one action, false = idle

@@ -101,6 +101,10 @@ void epd_sched_frame(epd_sched_t *s, const epd_rect_t *panel_rects, uint8_t n)
     for (uint8_t i = 0; i < n; i++) {
         pending_add(s, panel_rects[i]);
     }
+    if (n > 0 && s->gray_ready) {
+        s->gray_ready = false;   // the planes show an older image: make them again
+        s->gray_asked = false;
+    }
 }
 
 void epd_sched_request(epd_sched_t *s, epd_mode_t mode, uint32_t seq)
@@ -118,6 +122,11 @@ void epd_sched_request(epd_sched_t *s, epd_mode_t mode, uint32_t seq)
 void epd_sched_frame_end(epd_sched_t *s)
 {
     s->awaiting_frame = false;
+}
+
+void epd_sched_gray_ready(epd_sched_t *s)
+{
+    s->gray_ready = true;
 }
 
 void epd_sched_force_full(epd_sched_t *s)
@@ -145,6 +154,20 @@ static bool work_pending(const epd_sched_t *s)
 static bool timed_out(const epd_sched_t *s, uint32_t now_ms)
 {
     return (uint32_t)(now_ms - s->start_ms) >= s->busy_timeout_ms;
+}
+
+static epd_mode_t pending_mode(const epd_sched_t *s)
+{
+    if (s->force_full) {
+        return EPD_M_FULL_CLEAN;
+    }
+    return s->has_intent ? s->mode : EPD_M_FAST;
+}
+
+// Pending work that cannot start until the caller acts (frame_end, gray_ready)
+static bool blocked(const epd_sched_t *s)
+{
+    return s->awaiting_frame || (pending_mode(s) == EPD_M_GRAY && !s->gray_ready && s->gray_asked);
 }
 
 bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out)
@@ -181,9 +204,14 @@ bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out)
         return false;
     }
 
-    epd_mode_t mode = s->has_intent ? s->mode : EPD_M_FAST;
-    if (s->force_full) {
-        mode = EPD_M_FULL_CLEAN;
+    epd_mode_t mode = pending_mode(s);
+    if (mode == EPD_M_GRAY && !s->gray_ready) {
+        if (s->gray_asked) {
+            return false;
+        }
+        s->gray_asked = true;
+        out->kind = EPD_ACT_NEED_GRAY;
+        return true;
     }
     out->kind = EPD_ACT_START;
     out->mode = mode;
@@ -203,6 +231,8 @@ bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out)
     s->mode = EPD_M_FAST;
     s->seq = 0;
     s->force_full = false;
+    s->gray_asked = false;
+    s->gray_ready = false;
     return true;
 }
 
@@ -215,7 +245,7 @@ uint32_t epd_sched_wait_ms(const epd_sched_t *s, uint32_t now_ms)
         uint32_t elapsed = now_ms - s->start_ms;
         return elapsed >= s->busy_timeout_ms ? 0 : s->busy_timeout_ms - elapsed;
     }
-    return work_pending(s) ? 0 : UINT32_MAX;
+    return work_pending(s) && !blocked(s) ? 0 : UINT32_MAX;
 }
 
 bool epd_sched_idle(const epd_sched_t *s)
