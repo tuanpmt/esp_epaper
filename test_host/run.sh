@@ -25,5 +25,6 @@ run_test() {
 
 # One line per test binary
 run_test test_smoke test_host/test_smoke.c
+run_test test_bus_rec test_host/epd_bus_rec.c test_host/test_bus_rec.c
 
 exit $STATUS
