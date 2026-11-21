@@ -151,7 +151,20 @@ static uint32_t ms_since(uint32_t polls)
 static esp_err_t try_on(epd_tps_t *t)
 {
     t->ops->oe_low(t->ops->ctx);
+    const bool was_standby = t->state == EPD_TPS_STANDBY;
     esp_err_t err = epd_tps_wake(t);
+    // SLVSAQ8G 8.3.8: after a fault the rails stay off until INT1 and INT2
+    // were read. wake() reads them coming out of SLEEP; between refreshes the
+    // chip stays in STANDBY, so read (and check) them here as well.
+    if (err == ESP_OK && was_standby) {
+        err = rd(t, EPD_TPS_REG_INT1, &t->st.int1);
+        if (err == ESP_OK) {
+            err = rd(t, EPD_TPS_REG_INT2, &t->st.int2);
+        }
+        if (err == ESP_OK && (t->st.int1 & EPD_TPS_INT1_THERMAL)) {
+            err = ESP_ERR_INVALID_STATE;
+        }
+    }
     if (err == ESP_OK) {
         err = wr_verify(t, EPD_TPS_REG_UPSEQ0, EPD_TPS_UPSEQ0);
     }

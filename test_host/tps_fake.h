@@ -32,6 +32,8 @@ typedef struct {
     int asleep_i2c;         // I2C attempts while WAKEUP was low
     int tmst_polls;         // TMST1 reads before the done bit shows
     bool pg_drop;           // PWR_GOOD pin forced low (fault injection)
+    bool int_latched;       // a fault latched INT bits: rails stay off until INT1 and INT2 are read (8.3.8)
+    bool int1_read;
     epd_tps_ops_t ops;
 } tps_fake_t;
 

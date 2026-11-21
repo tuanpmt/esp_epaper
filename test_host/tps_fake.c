@@ -15,6 +15,9 @@ bool tf_pin_good(tps_fake_t *f)
     }
     const uint64_t since = f->now_us - f->pwrup_edge_us;
     if (f->line[EPD_TPS_LINE_PWRUP]) {
+        if (f->int_latched) {
+            return false;
+        }
         return f->pg_rise_us >= 0 && since >= (uint64_t)f->pg_rise_us;
     }
     // falling: still good until pg_fall_us after PWRUP went low (only if it was ever good)
@@ -46,6 +49,11 @@ static esp_err_t f_read(void *ctx, uint8_t reg, uint8_t *val)
     tps_fake_t *f = ctx;
     esp_err_t err = i2c_gate(f);
     if (err == ESP_OK) {
+        if (reg == EPD_TPS_REG_INT1) {
+            f->int1_read = true;
+        } else if (reg == EPD_TPS_REG_INT2 && f->int1_read) {
+            f->int_latched = false;     // both read: rails may come up again
+        }
         if (reg == EPD_TPS_REG_PG) {
             f->regs[reg] = (f->pg_reg_good && tf_pin_good(f)) ? 0xFA : 0x00;
         } else if (reg == EPD_TPS_REG_TMST1) {
@@ -81,6 +89,10 @@ static esp_err_t f_line(void *ctx, epd_tps_line_t line, bool level)
         f->pwrup_edge_us = f->now_us;
     }
     f->line[line] = level;
+    if (line == EPD_TPS_LINE_WAKEUP && !level) {
+        f->int_latched = false;     // toggling WAKEUP also resets the interrupt bits
+        f->int1_read = false;
+    }
     return ESP_OK;
 }
 

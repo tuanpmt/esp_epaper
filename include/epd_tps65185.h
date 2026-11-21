@@ -8,7 +8,8 @@
 // driver dependency, so the sequence is host-tested byte for byte.
 //
 // Power-up order (stricter than the vendor firmware and EPDiy):
-//   WAKEUP=1, 50 ms, probe, REVID, read INT1/INT2 (clears them)
+//   WAKEUP=1, 50 ms, probe, REVID, read INT1/INT2 (clears them; also before
+//   every power-up from STANDBY: a latched fault blocks the rails, SLVSAQ8G 8.3.8)
 //   UPSEQ0/1 and VCOM1/VCOM2 written and read back while in STANDBY
 //   PWRUP=1, wait for the PWR_GOOD pin, ENABLE=0x3F, wait for PG register
 //   bits 0xFA, then VCOM_CTRL=1 last
@@ -55,7 +56,7 @@ extern "C" {
 #define EPD_TPS_ENABLE_RAILS    0x3F    // as vendor firmware and EPDiy, after PWR_GOOD only
 #define EPD_TPS_PG_MASK         0xFA    // PG register bits that must all be set
 #define EPD_TPS_VCOM2_ALLOWED   0x01    // VCOM2: only bit 0 (VCOM bit 8) may ever be written
-#define EPD_TPS_INT1_THERMAL    0x60    // INT1 TSD | HOT: refuse to power up (verify in stage A0)
+#define EPD_TPS_INT1_THERMAL    0x60    // INT1 bit 6 TSD, bit 5 HOT (SLVSAQ8G 8.6.8): refuse to power up
 #define EPD_TPS_TMST1_READ      0x80    // TMST1: start a thermistor conversion
 #define EPD_TPS_TMST1_DONE      0x20    // TMST1: conversion done
 

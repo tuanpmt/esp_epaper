@@ -246,6 +246,26 @@ static void test_tps_pg_ok_drop_powers_off(void)
     CHECK(epd_tps_state(&t) == EPD_TPS_STANDBY);
 }
 
+// SLVSAQ8G 8.3.8: after a fault the rails cannot come up again until INT1 and
+// INT2 were read; the chip stays in STANDBY between refreshes, so every
+// power-up reads them first
+static void test_tps_reads_int_before_every_power_up(void)
+{
+    setup();
+    CHECK(epd_tps_hv_on(&t) == ESP_OK);
+    CHECK(epd_tps_hv_off(&t) == ESP_OK);
+    f.int_latched = true;       // a fault during the last refresh
+    f.int1_read = false;
+    const int ups = tf_count(&f, TF_LINE, L_PWRUP, 1);
+    const int n = f.n;
+    CHECK(epd_tps_hv_on(&t) == ESP_OK);
+    CHECK(tf_count(&f, TF_LINE, L_PWRUP, 1) == ups + 1);    // first attempt, no retry
+    const int i1 = tf_find(&f, TF_RD, EPD_TPS_REG_INT1, -1, n);
+    const int i2 = tf_find(&f, TF_RD, EPD_TPS_REG_INT2, -1, n);
+    const int up = tf_find(&f, TF_LINE, L_PWRUP, 1, n);
+    CHECK(i1 >= 0 && i2 > i1 && up > i2);
+}
+
 static void test_tps_budget(void)
 {
     CHECK(epd_tps_hv_budget_ms(20) == 600);
@@ -271,6 +291,7 @@ int main(void)
     test_tps_sleep_waits_120ms();
     test_tps_temperature();
     test_tps_pg_ok_drop_powers_off();
+    test_tps_reads_int_before_every_power_up();
     test_tps_budget();
     TEST_DONE("tps65185");
 }
