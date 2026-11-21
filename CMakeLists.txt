@@ -8,6 +8,8 @@ idf_component_register(
         "src/epd_sched.c"
         "src/epd_quant.c"
         "src/epd_dirty.c"
+        "src/epd_round.c"
+        "src/epd_lvgl.c"
         "src/controllers/ssd1677.c"
         "src/controllers/ssd1677_lut.c"
         "src/controllers/ssd16xx.c"
@@ -23,4 +25,5 @@ idf_component_register(
         lvgl
     PRIV_REQUIRES
         esp_psram
+        log
 )
