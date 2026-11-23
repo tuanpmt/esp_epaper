@@ -17,6 +17,7 @@ idf_component_register(
         "src/epd_sched.c"
         "src/epd_quant.c"
         "src/epd_dirty.c"
+        "src/epd_ghost.c"
         "src/epd_round.c"
         "src/epd_par_timing.c"
         "src/epd_wf.c"
