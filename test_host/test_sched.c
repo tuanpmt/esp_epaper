@@ -314,8 +314,143 @@ static void test_sched_gray_waits_for_planes(void)
     CHECK(a.n == 1 && is_full_screen(&a));
 }
 
+// ---- Touch hold: the press highlight merges with what the tap opens -------
+// The screen-change intent is EPD_M_PARTIAL here; plan 9 maps it to
+// EPD_M_TRANSITION once that mode exists. Any intent mode ends the hold.
+
+static void test_sched_hold_defers_plain_frames(void)
+{
+    epd_sched_t s;
+    epd_act_t a;
+    epd_sched_init(&s, W, H, 8, TMO);
+    epd_sched_hold(&s, 150);                    // finger down at t=0
+    epd_rect_t press = R(100, 200, 80, 40);
+    epd_sched_frame(&s, &press, 1);
+    CHECK(!epd_sched_next(&s, 0, &a));
+    CHECK(!epd_sched_next(&s, 149, &a));
+    CHECK(!epd_sched_idle(&s));                 // held work is still pending work
+
+    // until_ms 0 ends the hold at once
+    epd_sched_hold(&s, 0);
+    CHECK(epd_sched_next(&s, 149, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_FAST);
+}
+
+static void test_sched_hold_expires(void)
+{
+    epd_sched_t s;
+    epd_act_t a;
+    epd_sched_init(&s, W, H, 8, TMO);
+    epd_sched_hold(&s, 1150);                   // DOWN at t=1000
+    epd_rect_t press = R(100, 200, 80, 40);
+    epd_sched_frame(&s, &press, 1);
+    CHECK(!epd_sched_next(&s, 1100, &a));
+    CHECK(epd_sched_next(&s, 1150, &a));        // a long press: the highlight shows after the hold
+    CHECK(a.kind == EPD_ACT_START && a.mode == EPD_M_FAST);
+    CHECK(a.n == 1 && a.rects[0].x == 96 && a.rects[0].y == 200 && a.rects[0].w == 88 && a.rects[0].h == 40);
+    epd_sched_done(&s, 1300);
+    CHECK(epd_sched_next(&s, 1300, &a) && a.kind == EPD_ACT_COMMIT && a.seq == 0);
+    // The expired hold does not come back for later frames
+    epd_sched_frame(&s, &press, 1);
+    CHECK(epd_sched_next(&s, 1301, &a) && a.kind == EPD_ACT_START);
+
+    // Deadline across the 32-bit wrap
+    epd_sched_init(&s, W, H, 8, TMO);
+    const uint32_t t0 = UINT32_MAX - 50;
+    epd_sched_hold(&s, t0 + 150u);
+    epd_sched_frame(&s, &press, 1);
+    CHECK(!epd_sched_next(&s, t0, &a));
+    CHECK(!epd_sched_next(&s, t0 + 149u, &a));
+    CHECK(epd_sched_next(&s, t0 + 150u, &a) && a.kind == EPD_ACT_START);
+}
+
+static void test_sched_hold_ends_on_intent(void)
+{
+    epd_sched_t s;
+    epd_act_t a;
+    epd_sched_init(&s, W, H, 8, TMO);
+    epd_sched_hold(&s, 150);                    // DOWN at t=0
+    epd_rect_t press = R(100, 200, 80, 40);
+    epd_sched_frame(&s, &press, 1);             // pressed style
+    CHECK(!epd_sched_next(&s, 40, &a));
+    epd_sched_hold(&s, 80 + 60);                // UP at t=80: wait for the click's intent
+    epd_sched_frame(&s, &press, 1);             // released style
+    CHECK(!epd_sched_next(&s, 90, &a));
+    epd_sched_request(&s, EPD_M_PARTIAL, 7);    // the click opened a screen
+    epd_rect_t screen = R(0, 300, 800, 180);
+    epd_sched_frame(&s, &screen, 1);
+    epd_sched_frame_end(&s);
+    CHECK(epd_sched_next(&s, 95, &a));
+    CHECK(a.kind == EPD_ACT_START && a.mode == EPD_M_PARTIAL);
+    CHECK(covered(&a, press) && covered(&a, screen));
+    CHECK(!epd_sched_next(&s, 95, &a));         // one run for press + release + screen
+    epd_sched_done(&s, 120);
+    CHECK(epd_sched_next(&s, 120, &a) && a.kind == EPD_ACT_COMMIT && a.seq == 7);
+    CHECK(!epd_sched_next(&s, 120, &a));
+    CHECK(epd_sched_idle(&s));
+
+    // The intent ended the hold: a plain frame before t=140 is not held
+    epd_sched_frame(&s, &press, 1);
+    CHECK(epd_sched_wait_ms(&s, 121) == 0);
+    CHECK(epd_sched_next(&s, 121, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_FAST);
+}
+
+static void test_sched_hold_wait_ms(void)
+{
+    epd_sched_t s;
+    epd_act_t a;
+    epd_sched_init(&s, W, H, 8, TMO);
+    epd_sched_hold(&s, 150);
+    CHECK(epd_sched_wait_ms(&s, 0) == UINT32_MAX);   // nothing held: sleep
+    epd_rect_t press = R(8, 8, 8, 8);
+    epd_sched_frame(&s, &press, 1);
+    CHECK(epd_sched_wait_ms(&s, 0) == 150);          // wake when the hold ends
+    CHECK(epd_sched_wait_ms(&s, 100) == 50);
+    CHECK(epd_sched_wait_ms(&s, 150) == 0);
+    CHECK(epd_sched_wait_ms(&s, 170) == 0);
+    // An intent that waits for its frame: blocked, the frame wakes the task
+    epd_sched_request(&s, EPD_M_PARTIAL, 2);
+    CHECK(epd_sched_wait_ms(&s, 100) == UINT32_MAX);
+    epd_sched_frame_end(&s);
+    CHECK(epd_sched_wait_ms(&s, 100) == 0);
+    CHECK(epd_sched_next(&s, 100, &a) && a.kind == EPD_ACT_START);
+    // In flight: the BUSY timeout, not the hold
+    epd_sched_hold(&s, 130);
+    epd_sched_frame(&s, &press, 1);
+    CHECK(epd_sched_wait_ms(&s, 110) == TMO - 10);
+    epd_sched_done(&s, 120);
+    CHECK(epd_sched_wait_ms(&s, 120) == 0);          // the commit
+    CHECK(epd_sched_next(&s, 120, &a) && a.kind == EPD_ACT_COMMIT);
+    CHECK(epd_sched_wait_ms(&s, 120) == 10);         // then the held frame
+}
+
+static void test_sched_hold_does_not_delay_intents(void)
+{
+    epd_sched_t s;
+    epd_act_t a;
+    epd_sched_init(&s, W, H, 8, TMO);
+    epd_sched_hold(&s, 1000);
+    epd_sched_request(&s, EPD_M_FULL_CLEAN, 3);
+    epd_sched_frame_end(&s);
+    CHECK(epd_sched_next(&s, 0, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_FULL_CLEAN);
+
+    // A finger down while an intent is pending: the intent still goes at once
+    epd_sched_init(&s, W, H, 8, TMO);
+    epd_sched_request(&s, EPD_M_PARTIAL, 4);
+    epd_rect_t r = R(0, 0, 16, 8);
+    epd_sched_frame(&s, &r, 1);
+    epd_sched_frame_end(&s);
+    epd_sched_hold(&s, 1000);
+    CHECK(epd_sched_wait_ms(&s, 0) == 0);
+    CHECK(epd_sched_next(&s, 0, &a) && a.kind == EPD_ACT_START && a.mode == EPD_M_PARTIAL);
+}
+
 int main(void)
 {
+    test_sched_hold_defers_plain_frames();
+    test_sched_hold_expires();
+    test_sched_hold_ends_on_intent();
+    test_sched_hold_wait_ms();
+    test_sched_hold_does_not_delay_intents();
     test_sched_gray_waits_for_planes();
     test_sched_intent_waits_for_its_frame();
     test_sched_frame_without_intent_is_fast_seq0();

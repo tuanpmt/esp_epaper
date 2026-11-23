@@ -114,6 +114,7 @@ void epd_sched_request(epd_sched_t *s, epd_mode_t mode, uint32_t seq)
     }
     s->has_intent = true;
     s->awaiting_frame = true;
+    s->hold = false;            // the tap produced its intent: the held frames go with it
     if (seq > s->seq) {
         s->seq = seq;
     }
@@ -132,6 +133,24 @@ void epd_sched_gray_ready(epd_sched_t *s)
 void epd_sched_force_full(epd_sched_t *s)
 {
     s->force_full = true;
+}
+
+void epd_sched_hold(epd_sched_t *s, uint32_t until_ms)
+{
+    s->hold = until_ms != 0;
+    s->hold_until = until_ms;
+}
+
+// Wrap-safe "now >= hold_until"
+static bool hold_over(const epd_sched_t *s, uint32_t now_ms)
+{
+    return (int32_t)(now_ms - s->hold_until) >= 0;
+}
+
+// Pending work is a run without an intent that the touch hold keeps back
+static bool held(const epd_sched_t *s, uint32_t now_ms)
+{
+    return s->hold && !s->has_intent && !hold_over(s, now_ms);
 }
 
 void epd_sched_done(epd_sched_t *s, uint32_t now_ms)
@@ -200,7 +219,10 @@ bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out)
         out->error = s->commit_error;
         return true;
     }
-    if (s->busy || !work_pending(s) || s->awaiting_frame) {
+    if (s->hold && hold_over(s, now_ms)) {
+        s->hold = false;        // expired: never compare against a stale deadline later
+    }
+    if (s->busy || !work_pending(s) || s->awaiting_frame || held(s, now_ms)) {
         return false;
     }
 
@@ -245,7 +267,10 @@ uint32_t epd_sched_wait_ms(const epd_sched_t *s, uint32_t now_ms)
         uint32_t elapsed = now_ms - s->start_ms;
         return elapsed >= s->busy_timeout_ms ? 0 : s->busy_timeout_ms - elapsed;
     }
-    return work_pending(s) && !blocked(s) ? 0 : UINT32_MAX;
+    if (!work_pending(s) || blocked(s)) {
+        return UINT32_MAX;
+    }
+    return held(s, now_ms) ? s->hold_until - now_ms : 0;
 }
 
 bool epd_sched_idle(const epd_sched_t *s)

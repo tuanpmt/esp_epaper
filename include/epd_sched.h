@@ -54,6 +54,9 @@ typedef struct {
     uint32_t commit_seq;
     bool commit_error;
     uint32_t last_seq;                            // highest non-zero seq committed so far
+    // touch hold (epd_sched_hold)
+    bool hold;
+    uint32_t hold_until;
 } epd_sched_t;
 
 void epd_sched_init(epd_sched_t *s, uint16_t pan_w, uint16_t pan_h, uint8_t align, uint32_t busy_timeout_ms);
@@ -65,9 +68,14 @@ void epd_sched_request(epd_sched_t *s, epd_mode_t mode, uint32_t seq);          
 void epd_sched_frame_end(epd_sched_t *s);
 void epd_sched_gray_ready(epd_sched_t *s);       // gray planes made after NEED_GRAY
 void epd_sched_force_full(epd_sched_t *s);       // invert changed / unpark / first frame
+// Frames without an intent wait until until_ms: while a finger is down the
+// press highlight is held, so it merges with the release and the screen the
+// tap opens (stock keeps a 60 ms merge window for screen changes,
+// epd_refresh.cc:439). An intent, a later until_ms of 0, or the deadline ends the hold.
+void epd_sched_hold(epd_sched_t *s, uint32_t until_ms);
 void epd_sched_done(epd_sched_t *s, uint32_t now_ms);                              // panel finished
 bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out);             // one action, false = idle
-uint32_t epd_sched_wait_ms(const epd_sched_t *s, uint32_t now_ms);                // until timeout check, UINT32_MAX idle
+uint32_t epd_sched_wait_ms(const epd_sched_t *s, uint32_t now_ms);                // until timeout check or hold end, UINT32_MAX idle
 bool epd_sched_idle(const epd_sched_t *s);       // nothing pending, nothing in flight (park may proceed)
 
 #ifdef __cplusplus
