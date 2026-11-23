@@ -129,15 +129,16 @@ static void test_wf_pick_nearest_range(void)
 
 static void test_wf_gating_cold(void)
 {
-    // stock profile 0 "Clear" (epd_refresh.cc:227-229): every DU refresh uses DU 20
-    CHECK(epd_wf_kind_for(EPD_M_FAST, 25, true) == EPD_WF_DU);
+    // FAST: DU 14 (stock "Fast" profile); PARTIAL and TRANSITION: DU 20
+    CHECK(epd_wf_kind_for(EPD_M_FAST, 25, true) == EPD_WF_DU_FAST);
     CHECK(epd_wf_kind_for(EPD_M_PARTIAL, 25, true) == EPD_WF_DU);
     CHECK(epd_wf_kind_for(EPD_M_GRAY, 25, true) == EPD_WF_GL16);
     CHECK(epd_wf_kind_for(EPD_M_FULL_CLEAN, 25, true) == EPD_WF_GC16);
     CHECK(epd_wf_kind_for(EPD_M_FAST, 4, true) == EPD_WF_GC16);
     CHECK(epd_wf_kind_for(EPD_M_PARTIAL, 46, true) == EPD_WF_GC16);
-    CHECK(epd_wf_kind_for(EPD_M_FAST, 5, true) == EPD_WF_DU);
-    CHECK(epd_wf_kind_for(EPD_M_FAST, -40, false) == EPD_WF_DU);   // no reading: 25 C, as stock always
+    CHECK(epd_wf_kind_for(EPD_M_FAST, 5, true) == EPD_WF_DU_FAST);
+    CHECK(epd_wf_kind_for(EPD_M_FAST, -40, false) == EPD_WF_DU_FAST);   // no reading: 25 C, as stock always
+    CHECK(epd_wf_kind_for(EPD_M_TRANSITION, 46, true) == EPD_WF_GC16);
     CHECK(epd_wf_kind_for(EPD_M_GRAY, 2, true) == EPD_WF_GL16);
 }
 
@@ -269,6 +270,171 @@ static void test_wf_trans_plane_kernel_matches(void)
     CHECK(r_tp[1] == (uint8_t)(((r_cur[0] & 0x0F) << 4) | (r_next[0] & 0x0F)));
 }
 
+
+// Mode -> table for the fast UI (plan 9 T5)
+static void test_wf_kind_for_modes(void)
+{
+    CHECK(epd_wf_kind_for(EPD_M_FAST, 25, false) == EPD_WF_DU_FAST);
+    CHECK(epd_wf_kind_for(EPD_M_PARTIAL, 25, false) == EPD_WF_DU);
+    CHECK(epd_wf_kind_for(EPD_M_TRANSITION, 25, false) == EPD_WF_DU);
+    CHECK(epd_wf_kind_for(EPD_M_GRAY, 25, false) == EPD_WF_GL16);
+    CHECK(epd_wf_kind_for(EPD_M_FULL_CLEAN, 25, false) == EPD_WF_GC16);
+    CHECK(epd_wf_kind_binary(EPD_WF_DU) && epd_wf_kind_binary(EPD_WF_DU_FAST) && epd_wf_kind_binary(EPD_WF_DU_SHORT));
+    CHECK(!epd_wf_kind_binary(EPD_WF_GL16) && !epd_wf_kind_binary(EPD_WF_GC16));
+}
+
+// GRAY is a differential GL16 over the changed box (vendor gray.differential)
+static void test_wf_rule_gray_differential(void)
+{
+    CHECK(epd_wf_rule_for(EPD_M_GRAY, EPD_WF_GL16) == EPD_WF_SKIP_SAME_GL16);
+    CHECK(epd_wf_rule_for(EPD_M_GRAY, EPD_WF_GL16_TRIM) == EPD_WF_SKIP_SAME_GL16);
+    CHECK(epd_wf_rule_for(EPD_M_FULL_CLEAN, EPD_WF_GC16) == EPD_WF_DRIVE_ALL);
+    CHECK(epd_wf_rule_for(EPD_M_FAST, EPD_WF_DU_FAST) == EPD_WF_SKIP_SAME_KEEP_BLACK);
+}
+
+// Reference for the binary target of one pixel: an unchanged level stays
+// (nothing is driven), a changed one goes to black or white
+static int bin_px(int cur, int next)
+{
+    return next == cur ? cur : (next >= 8 ? 15 : 0);
+}
+
+static uint8_t pxb(const uint8_t *p, size_t ps, int x, int y)
+{
+    const uint8_t b = p[(size_t)y * ps + x / 2];
+    return (uint8_t)(x & 1 ? b & 15 : b >> 4);
+}
+
+static void test_wf_du_commit_binarizes(void)
+{
+    enum { W = 16, H = 2, PS = W / 2 };
+    uint8_t cur[PS * H], tgt[PS * H], g[PS * H];
+    memset(cur, 0xFF, sizeof(cur));
+    memset(tgt, 0xFF, sizeof(tgt));
+    tgt[0] = 0x79;              // px0 7 -> black, px1 9 -> white (stays 15)
+    tgt[1] = 0x97;              // px2 9 -> white, px3 7 -> black
+    cur[2] = 0x7F;              // px4 gray 7 shown (a GL16 run), target 7: unchanged, stays 7
+    tgt[2] = 0x7F;
+    cur[3] = 0x00;              // px6, px7 black; target 9 and 8: white
+    tgt[3] = 0x98;
+    memcpy(g, cur, sizeof(g));
+    const epd_rect_t band = {0, 0, W, H};
+    epd_wf_commit_bin(cur, tgt, PS, band);
+    CHECK(cur[0] == 0x0F);
+    CHECK(cur[1] == 0xF0);
+    CHECK(cur[2] == 0x7F);
+    CHECK(cur[3] == 0xFF);
+    CHECK(cur[PS] == 0xFF);
+    // GL16 commit keeps the gray levels
+    epd_wf_commit(g, tgt, PS, band);
+    CHECK(g[0] == 0x79 && g[1] == 0x97 && g[3] == 0x98);
+    // outside the band: untouched
+    memset(cur, 0x11, sizeof(cur));
+    memset(tgt, 0x99, sizeof(tgt));
+    epd_wf_commit_bin(cur, tgt, PS, (epd_rect_t){4, 1, 8, 1});
+    for (int y = 0; y < H; y++) {
+        for (int b = 0; b < PS; b++) {
+            const bool in = y == 1 && b >= 2 && b < 6;
+            CHECK(cur[y * PS + b] == (in ? 0xFF : 0x11));
+        }
+    }
+}
+
+enum { FW = 1216, FH = 684, FPS = FW / 2 };
+static uint8_t f_cur[FPS * FH], f_next[FPS * FH], f_com[FPS * FH];
+static uint16_t f_pp[FPS * FH], f_ref[FPS * FH];
+
+static void test_wf_pair_plane_bin_matches_scalar(void)
+{
+    srand(11);
+    for (size_t i = 0; i < sizeof(f_cur); i++) {
+        f_cur[i] = (uint8_t)rand();
+        // about half the pixels keep their level, so both branches are hit
+        f_next[i] = (rand() & 1) ? f_cur[i] : (uint8_t)rand();
+        if (rand() % 3 == 0) {
+            f_next[i] = (uint8_t)((f_next[i] & 0xF0) | (f_cur[i] & 0x0F));
+        }
+    }
+    const epd_rect_t bands[] = {{0, 0, FW, FH}, {4, 1, 1204, 5}, {8, 2, 20, 3}, {12, 0, 4, 2}, {1212, 3, 4, 4},
+                                {28, 5, 1000, 600}, {0, 683, 1216, 1}};
+    for (size_t k = 0; k < sizeof(bands) / sizeof(bands[0]); k++) {
+        const epd_rect_t b = bands[k];
+        memset(f_pp, 0xEE, sizeof(f_pp));
+        memset(f_ref, 0xEE, sizeof(f_ref));
+        for (int y = b.y; y < b.y + b.h; y++) {
+            for (int x = b.x; x < b.x + b.w; x += 2) {
+                const size_t o = (size_t)y * FPS + x / 2;
+                const int c0 = pxb(f_cur, FPS, x, y), c1 = pxb(f_cur, FPS, x + 1, y);
+                const int t0 = bin_px(c0, pxb(f_next, FPS, x, y)), t1 = bin_px(c1, pxb(f_next, FPS, x + 1, y));
+                f_ref[o] = (uint16_t)((f_cur[o] << 8) | (t0 << 4) | t1);
+            }
+        }
+        epd_wf_pair_plane_bin(f_cur, f_next, FPS, f_pp, b);
+        CHECK(memcmp(f_pp, f_ref, sizeof(f_pp)) == 0);
+        // the commit stores the same targets the pair plane drove to
+        memcpy(f_com, f_cur, sizeof(f_com));
+        epd_wf_commit_bin(f_com, f_next, FPS, b);
+        bool same = true;
+        for (int y = b.y; y < b.y + b.h && same; y++) {
+            for (int x = b.x; x < b.x + b.w; x += 2) {
+                const size_t o = (size_t)y * FPS + x / 2;
+                same &= f_com[o] == (uint8_t)(f_ref[o] & 0xFF);
+            }
+        }
+        CHECK(same);
+        // and says "unchanged" exactly when the pair plane holds no change
+        const epd_rect_t box = epd_wf_changed_box(f_pp, FPS, b);
+        CHECK(epd_wf_unchanged(f_cur, f_next, FPS, b, true) == (box.w == 0));
+    }
+}
+
+// A DU run from a gray level (left by a GL16 run) ends at the binary target:
+// the table only darkens towards black and only lightens towards white
+static void test_wf_du_from_gray_drives_to_endpoint(void)
+{
+    const epd_wf_kind_t kinds[] = {EPD_WF_DU, EPD_WF_DU_FAST};
+    for (size_t k = 0; k < 2; k++) {
+        const epd_wf_phases_t *w = epd_wf_pick(&EPD_WF_E0470, kinds[k], 25);
+        for (int from = 1; from < 15; from++) {
+            const int tos[2] = {bin_px(from, 7), bin_px(from, 9)};
+            for (int i = 0; i < 2; i++) {
+                const int to = tos[i];
+                if (to == from) {
+                    continue;
+                }
+                int toward = 0, away = 0;
+                for (int p = 0; p < w->phases; p++) {
+                    uint8_t d[EPD_WF_LEVELS][4];
+                    epd_wf_phase_data(w, p, EPD_WF_SKIP_SAME_KEEP_BLACK, d);
+                    const int a = (d[to][from / 4] >> (6 - 2 * (from % 4))) & 3;
+                    toward += a == (to == 0 ? 1 : 2);
+                    away += a == (to == 0 ? 2 : 1);
+                }
+                CHECK(toward > 0);
+                CHECK(toward > away);
+            }
+        }
+    }
+}
+
+static void test_wf_unchanged_raw_and_bin(void)
+{
+    enum { W = 32, H = 4, PS = W / 2 };
+    uint8_t cur[PS * H], next[PS * H];
+    memset(cur, 0xFF, sizeof(cur));
+    memcpy(next, cur, sizeof(next));
+    const epd_rect_t all = {0, 0, W, H};
+    CHECK(epd_wf_unchanged(cur, next, PS, all, false));
+    CHECK(epd_wf_unchanged(cur, next, PS, all, true));
+    next[PS + 3] = 0xF9;        // anti-aliased 9 over white: no change for DU, a change for GL16
+    CHECK(!epd_wf_unchanged(cur, next, PS, all, false));
+    CHECK(epd_wf_unchanged(cur, next, PS, all, true));
+    next[PS + 3] = 0xF7;        // 7 over white: black for DU
+    CHECK(!epd_wf_unchanged(cur, next, PS, all, true));
+    CHECK(epd_wf_unchanged(cur, next, PS, (epd_rect_t){8, 0, 8, H}, true));    // outside the rect
+    CHECK(epd_wf_unchanged(cur, next, PS, (epd_rect_t){0, 0, 0, 0}, true));     // empty rect
+}
+
 int main(void)
 {
     test_wf_pair_lut_matches_action();
@@ -284,5 +450,11 @@ int main(void)
     test_wf_phase_same();
     test_wf_pair_plane_kernel_matches();
     test_wf_trans_plane_kernel_matches();
+    test_wf_kind_for_modes();
+    test_wf_rule_gray_differential();
+    test_wf_du_commit_binarizes();
+    test_wf_pair_plane_bin_matches_scalar();
+    test_wf_du_from_gray_drives_to_endpoint();
+    test_wf_unchanged_raw_and_bin();
     TEST_DONE("wf");
 }

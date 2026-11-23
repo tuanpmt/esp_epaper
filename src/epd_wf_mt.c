@@ -11,7 +11,7 @@
 #include "esp_timer.h"
 #include "epd_wf_mt.h"
 
-typedef enum { J_PHASE, J_PHASE2, J_PHASE_PP, J_PHASE2_PP, J_PHASE_TP, J_PAIR_PLANE, J_TRANS_PLANE } kind_t;
+typedef enum { J_PHASE, J_PHASE2, J_PHASE_PP, J_PHASE2_PP, J_PHASE_TP, J_PAIR_PLANE, J_PAIR_PLANE_BIN, J_TRANS_PLANE } kind_t;
 
 typedef struct {
     kind_t kind;
@@ -52,6 +52,9 @@ static void run_job(const job_t *j)
         break;
     case J_PAIR_PLANE:
         epd_wf_pair_plane(j->cur, j->next, j->ps, j->pp_out, j->band);
+        break;
+    case J_PAIR_PLANE_BIN:
+        epd_wf_pair_plane_bin(j->cur, j->next, j->ps, j->pp_out, j->band);
         break;
     case J_TRANS_PLANE:
         epd_wf_trans_plane(j->cur, j->next, j->ps, j->tp_out, j->band);
@@ -160,6 +163,13 @@ void epd_wf_mt_pair_plane(const uint8_t *cur, const uint8_t *next, size_t plane_
                           epd_rect_t band)
 {
     split((job_t){.kind = J_PAIR_PLANE, .cur = cur, .next = next, .pp_out = pp, .ps = plane_stride, .band = band});
+}
+
+void epd_wf_mt_pair_plane_bin(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint16_t *pp,
+                              epd_rect_t band)
+{
+    split((job_t){.kind = J_PAIR_PLANE_BIN, .cur = cur, .next = next, .pp_out = pp, .ps = plane_stride,
+                  .band = band});
 }
 
 void epd_wf_mt_trans_plane(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint8_t *tp,

@@ -377,8 +377,8 @@ epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid)
     const int t = temp_valid ? temp_c : EPD_WF_TEMP_DEFAULT;
     const bool fast_ok = t >= EPD_WF_TEMP_FAST_MIN && t <= EPD_WF_TEMP_FAST_MAX;
     switch (m) {
-    case EPD_M_FAST:    // stock profile 0 "Clear": DU 20 for every DU refresh (epd_refresh.cc:227-229)
-        return fast_ok ? EPD_WF_DU : EPD_WF_GC16;
+    case EPD_M_FAST:    // stock "Fast" profile: DU 14 for ordinary DU refreshes (epd_refresh.cc:227-229)
+        return fast_ok ? EPD_WF_DU_FAST : EPD_WF_GC16;
     case EPD_M_PARTIAL:
     case EPD_M_TRANSITION:
         return fast_ok ? EPD_WF_DU : EPD_WF_GC16;
@@ -389,6 +389,117 @@ epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid)
     }
 }
 
+bool epd_wf_kind_binary(epd_wf_kind_t k)
+{
+    return k == EPD_WF_DU || k == EPD_WF_DU_FAST || k == EPD_WF_DU_SHORT;
+}
+
+// ---- binary targets (DU) ----
+
+// Per 4-bit level of a word: next == cur keeps cur, else 15 when next >= 8, else 0
+static inline uint32_t bin_target32(uint32_t c, uint32_t n)
+{
+    const uint32_t bin = ((n & 0x88888888u) >> 3) * 15u;     // 1 per level >= 8, times 15: no carry
+    uint32_t d = c ^ n;
+    d |= d >> 1;
+    d |= d >> 2;
+    const uint32_t changed = (d & 0x11111111u) * 15u;         // 0xF per level that changes
+    return (bin & changed) | (c & ~changed);
+}
+
+static inline uint8_t bin_target8(uint8_t c, uint8_t n)
+{
+    return (uint8_t)bin_target32(c, n);
+}
+
+void epd_wf_pair_plane_bin(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint16_t *pp,
+                           epd_rect_t band)
+{
+    if (band.w <= 0 || band.h <= 0) {
+        return;
+    }
+    const size_t bytes = (size_t)band.w / 2;
+    for (int y = band.y; y < band.y + band.h; y++) {
+        const size_t off = (size_t)y * plane_stride + (size_t)band.x / 2;
+        const uint8_t *c = cur + off;
+        const uint8_t *n = next + off;
+        uint16_t *p = pp + off;
+        size_t i = 0;
+        for (; i < bytes && (((uintptr_t)c & 3) || ((uintptr_t)n & 3) || ((uintptr_t)p & 7)); i++) {
+            p[i] = (uint16_t)((c[i] << 8) | bin_target8(c[i], n[i]));
+        }
+        if (!((uintptr_t)(c + i) & 3) && !((uintptr_t)(n + i) & 3) && !((uintptr_t)(p + i) & 7)) {
+            const uint32_t *cw = (const uint32_t *)(const void *)(c + i);
+            const uint32_t *nw = (const uint32_t *)(const void *)(n + i);
+            uint32_t *pw = (uint32_t *)(void *)(p + i);
+            for (; i + 4 <= bytes; i += 4) {
+                const uint32_t cv = *cw++, nv = bin_target32(cv, *nw++);
+                *pw++ = ((cv & 0xFFu) << 8) | (nv & 0xFFu) | ((cv & 0xFF00u) << 16) | ((nv & 0xFF00u) << 8);
+                *pw++ = ((cv >> 8) & 0xFF00u) | ((nv >> 16) & 0xFFu) | (cv & 0xFF000000u) | ((nv >> 8) & 0xFF0000u);
+            }
+        }
+        for (; i < bytes; i++) {
+            p[i] = (uint16_t)((c[i] << 8) | bin_target8(c[i], n[i]));
+        }
+    }
+}
+
+void epd_wf_commit_bin(uint8_t *cur, const uint8_t *target, size_t plane_stride, epd_rect_t band)
+{
+    if (band.w <= 0 || band.h <= 0) {
+        return;
+    }
+    const size_t bytes = (size_t)band.w / 2;
+    for (int y = band.y; y < band.y + band.h; y++) {
+        const size_t off = (size_t)y * plane_stride + (size_t)band.x / 2;
+        uint8_t *c = cur + off;
+        const uint8_t *t = target + off;
+        for (size_t i = 0; i < bytes; i++) {
+            c[i] = bin_target8(c[i], t[i]);
+        }
+    }
+}
+
+bool epd_wf_unchanged(const uint8_t *cur, const uint8_t *next, size_t plane_stride, epd_rect_t band, bool bin)
+{
+    if (band.w <= 0 || band.h <= 0) {
+        return true;
+    }
+    const size_t bytes = (size_t)band.w / 2;
+    for (int y = band.y; y < band.y + band.h; y++) {
+        const size_t off = (size_t)y * plane_stride + (size_t)band.x / 2;
+        const uint8_t *c = cur + off;
+        const uint8_t *n = next + off;
+        if (!bin) {
+            if (memcmp(c, n, bytes) != 0) {
+                return false;
+            }
+            continue;
+        }
+        size_t i = 0;
+        for (; i < bytes && (((uintptr_t)c & 3) || ((uintptr_t)n & 3)); i++) {
+            if (bin_target8(c[i], n[i]) != c[i]) {
+                return false;
+            }
+        }
+        if (!((uintptr_t)(c + i) & 3) && !((uintptr_t)(n + i) & 3)) {
+            const uint32_t *cw = (const uint32_t *)(const void *)(c + i);
+            const uint32_t *nw = (const uint32_t *)(const void *)(n + i);
+            for (; i + 4 <= bytes; i += 4, cw++, nw++) {
+                if (*cw != *nw && bin_target32(*cw, *nw) != *cw) {
+                    return false;
+                }
+            }
+        }
+        for (; i < bytes; i++) {
+            if (bin_target8(c[i], n[i]) != c[i]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // ---- unchanged-pixel rules ----
 // Own implementation of the behaviour of the vendor driver's
 // MODE_SKIP_UNCHANGED LUT builders (display/output_common/lut.c:450-480,
@@ -396,10 +507,11 @@ epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid)
 
 epd_wf_rule_t epd_wf_rule_for(epd_mode_t m, epd_wf_kind_t k)
 {
-    // epd_refresh.cc:291-297: a full refresh, GC16 and a non-differential GL16
-    // use epd_hl_update_screen_full (no skip); the rest goes through
-    // epd_hl_update_area (highlevel.c:247, MODE_SKIP_UNCHANGED)
-    if (m == EPD_M_FULL_CLEAN || m == EPD_M_GRAY) {
+    // epd_refresh.cc:291-297: a full refresh (GC16) uses epd_hl_update_screen_full
+    // (no skip); the rest goes through epd_hl_update_area (highlevel.c:247,
+    // MODE_SKIP_UNCHANGED). GRAY is differential too, as the vendor
+    // gray.differential path: only what changed is redrawn, with GL16's rule
+    if (m == EPD_M_FULL_CLEAN) {
         return EPD_WF_DRIVE_ALL;
     }
     switch (k) {

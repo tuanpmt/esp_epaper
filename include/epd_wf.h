@@ -61,11 +61,15 @@ extern const epd_wf_set_t EPD_WF_E0470;
 
 // The range that holds temp_c, else the nearest one. NULL: no table of that kind.
 const epd_wf_phases_t *epd_wf_pick(const epd_wf_set_t *s, epd_wf_kind_t k, int temp_c);
-// Refresh mode -> table, as the vendor firmware's default profile 0 "Clear"
-// (epd_refresh.cc:197-229): FAST and PARTIAL -> DU (20), GRAY -> GL16 (48),
-// FULL_CLEAN -> GC16 (48). FAST and PARTIAL become GC16 outside 5..45 C; the
-// vendor firmware always passes 25 C, and so does the Plus backend for now.
+// Refresh mode -> table. FAST: DU 14 (the vendor "Fast" profile's ordinary
+// DU, epd_refresh.cc:227-229); PARTIAL and TRANSITION: DU 20; GRAY: GL16 (48),
+// differential over the changed box as the vendor gray.differential path
+// (epd_refresh.cc:291-297); FULL_CLEAN: GC16 (48). Outside 5..45 C every DU
+// kind becomes GC16; the vendor firmware always passes 25 C, and so does the
+// Plus backend for now.
 epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid);
+// DU kinds only know black and white: their targets are binarized
+bool epd_wf_kind_binary(epd_wf_kind_t k);
 int epd_wf_action(const epd_wf_phases_t *w, int phase, int from, int to);
 
 // 64K table for one phase (lut 4-byte aligned): index (cur_byte << 8) | next_byte, both two 4 bpp
@@ -153,6 +157,18 @@ bool epd_wf_job_phase(epd_wf_job_t *j, int phase, uint8_t *out, size_t out_strid
 
 // After a successful refresh: cur = next inside the band.
 void epd_wf_commit(uint8_t *cur, const uint8_t *next, size_t plane_stride, epd_rect_t band);
+
+// Binary targets for the DU kinds (the vendor UI draws I1; our UI fonts are
+// 4 bpp): a pixel whose level does not change keeps it (nothing is driven,
+// e.g. a gray left by a GL16 run), a changed one goes to white at level >= 8
+// and to black below. Both the pair plane and the commit apply this rule, so
+// cur always holds what the panel shows. x and w of the band even.
+void epd_wf_pair_plane_bin(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint16_t *pp,
+                           epd_rect_t band);
+void epd_wf_commit_bin(uint8_t *cur, const uint8_t *target, size_t plane_stride, epd_rect_t band);
+// No pixel of the band would change (bin: under the binary rule above). A
+// cheap test before a run: no pair plane, no copy of the frame.
+bool epd_wf_unchanged(const uint8_t *cur, const uint8_t *next, size_t plane_stride, epd_rect_t band, bool bin);
 // Grow a band to whole bus bytes (x and w multiples of 4) inside pan_w x pan_h.
 epd_rect_t epd_wf_band_align(epd_rect_t r, uint16_t pan_w, uint16_t pan_h);
 

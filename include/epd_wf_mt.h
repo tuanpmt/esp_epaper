@@ -27,6 +27,9 @@ void epd_wf_mt_phase_tp(const uint8_t t[4][256], const uint8_t *tp, size_t tp_st
                         size_t out_stride, epd_rect_t band);
 void epd_wf_mt_pair_plane(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint16_t *pp,
                           epd_rect_t band);
+// DU kinds: binary targets (epd_wf_pair_plane_bin)
+void epd_wf_mt_pair_plane_bin(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint16_t *pp,
+                              epd_rect_t band);
 void epd_wf_mt_trans_plane(const uint8_t *cur, const uint8_t *next, size_t plane_stride, uint8_t *tp,
                            epd_rect_t band);
 // Both workers' priority (e.g. raised for the duration of a refresh)

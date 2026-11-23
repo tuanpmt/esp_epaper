@@ -123,7 +123,7 @@ static void test_rule_for(void)
     CHECK(epd_wf_rule_for(EPD_M_PARTIAL, EPD_WF_DU_FAST) == EPD_WF_SKIP_SAME_KEEP_BLACK);
     CHECK(epd_wf_rule_for(EPD_M_FAST, EPD_WF_GC16) == EPD_WF_DRIVE_ALL);       // cold: full GC16
     CHECK(epd_wf_rule_for(EPD_M_FULL_CLEAN, EPD_WF_GC16) == EPD_WF_DRIVE_ALL);
-    CHECK(epd_wf_rule_for(EPD_M_GRAY, EPD_WF_GL16) == EPD_WF_DRIVE_ALL);       // vendor: plain GL16 is a full draw
+    CHECK(epd_wf_rule_for(EPD_M_GRAY, EPD_WF_GL16) == EPD_WF_SKIP_SAME_GL16);  // vendor gray.differential
     CHECK(epd_wf_rule_for(EPD_M_PARTIAL, EPD_WF_GL16) == EPD_WF_SKIP_SAME_GL16);
 }
 
