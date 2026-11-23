@@ -24,6 +24,9 @@ static void setup(bool auto_old)
     done_calls = 0;
     const epd_ssd1677_cfg_t cfg = {.bus = &R.bus, .pan_w = 800, .pan_h = 480, .auto_old_plane = auto_old};
     CHECK(epd_ssd1677_init(&cfg, &C) == ESP_OK);
+    // The tests below assume the stock tables, whatever the default picks are
+    CHECK(epd_ssd1677_set_partial_timing(C, NULL) == ESP_OK);
+    CHECK(epd_ssd1677_set_fast_timing(C, NULL) == ESP_OK);
 }
 
 // Index of the n-th record of command cmd (n from 0), -1 when absent
@@ -308,6 +311,183 @@ static void test_ssd1677_arm_waits_for_busy_high(void)
     CHECK(i < R.n && R.log[i].type == EPD_REC_ARM);
 }
 
+// Index of the last 0x32 (wave table) record, -1 when none
+static int last_lut(void)
+{
+    int at = -1;
+    for (size_t i = 0; i < R.n; i++) {
+        if (R.log[i].type == EPD_REC_CMD && R.log[i].cmd == 0x32) {
+            at = (int)i;
+        }
+    }
+    return at;
+}
+
+static bool lut_bytes_are(int idx, const uint8_t *table)
+{
+    return cmd_is(idx, 0x32, table, SSD1677_LUT_WAVE_BYTES);
+}
+
+// FAST (interaction) runs on its own table; PARTIAL and TRANSITION keep the
+// partial table, FULL_CLEAN the full one
+static void test_ssd1677_fast_lut_used_for_fast_only(void)
+{
+    setup(true);
+    epd_ssd1677_timing_t t;
+    epd_ssd1677_fast_timing(C, &t);
+    t.tp[0][0] = 6;
+    memset(t.fr, 0x44, sizeof(t.fr));
+    CHECK(epd_ssd1677_set_fast_timing(C, &t) == ESP_OK);
+    epd_ssd1677_timing_t p;
+    epd_ssd1677_partial_timing(C, &p);
+    CHECK(p.tp[0][0] == 0x0D && p.fr[0] == 0x22);           // the partial table is untouched
+
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    CHECK(lut_bytes_are(last_lut(), ssd1677_lut_partial));
+
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_FAST, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    const int fast = last_lut();
+    CHECK(fast >= 0 && R.log[fast].len == SSD1677_LUT_WAVE_BYTES);
+    if (fast >= 0 && R.log[fast].len == SSD1677_LUT_WAVE_BYTES) {
+        CHECK(R.log[fast].bytes[50] == 6 && R.log[fast].bytes[100] == 0x44);
+    }
+    CHECK(cmd_is(nth_cmd(0x22, 0), 0x22, (const uint8_t[]){0xCF}, 1));   // still a partial update
+    CHECK(count_cmd(0x3C) == 0);                                          // border already set for partials
+
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_FAST, on_done, NULL) == ESP_OK);    // cached
+    epd_bus_rec_fire_busy(&R);
+    CHECK(count_cmd(0x32) == 0);
+
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_TRANSITION, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    CHECK(lut_bytes_are(last_lut(), ssd1677_lut_partial));
+
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_FULL_CLEAN, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    CHECK(lut_bytes_are(last_lut(), ssd1677_lut_fast));
+}
+
+// Same tables (the default): switching between PARTIAL and FAST never reloads
+static void test_ssd1677_same_tables_no_reload(void)
+{
+    setup(true);
+    epd_bus_rec_clear(&R);
+    for (int i = 0; i < 3; i++) {
+        CHECK(epd_ssd1677_start(C, i & 1 ? EPD_M_FAST : EPD_M_TRANSITION, on_done, NULL) == ESP_OK);
+        epd_bus_rec_fire_busy(&R);
+    }
+    CHECK(count_cmd(0x32) == 1);
+    // a fast table changed while it is the loaded one is loaded again
+    epd_ssd1677_timing_t t;
+    epd_ssd1677_fast_timing(C, &t);
+    memset(t.fr, 0x55, sizeof(t.fr));
+    CHECK(epd_ssd1677_set_fast_timing(C, &t) == ESP_OK);
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_FAST, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    CHECK(count_cmd(0x32) == 1);
+    // and the partial table, unchanged but no longer loaded, comes back
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    CHECK(lut_bytes_are(last_lut(), ssd1677_lut_partial));
+}
+
+// Same boundary as the partial table: only timing bytes move, only shorter
+static void test_ssd1677_fast_patch_only_timing_bytes(void)
+{
+    setup(true);
+    epd_ssd1677_timing_t t;
+    epd_ssd1677_fast_timing(C, &t);
+    CHECK(t.tp[0][0] == 0x0D && t.tp[1][0] == 0x04 && t.fr[0] == 0x22);   // stock partial timing
+    t.tp[0][0] = 6;
+    t.tp[1][0] = 2;
+    memset(t.fr, 0x44, sizeof(t.fr));
+    CHECK(epd_ssd1677_set_fast_timing(C, &t) == ESP_OK);
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_FAST, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    const int lut = last_lut();
+    CHECK(lut >= 0 && R.log[lut].len == SSD1677_LUT_WAVE_BYTES);
+    if (lut >= 0 && R.log[lut].len == SSD1677_LUT_WAVE_BYTES) {
+        int diff = 0;
+        for (int i = 0; i < SSD1677_LUT_WAVE_BYTES; i++) {
+            diff += R.log[lut].bytes[i] != ssd1677_lut_partial[i];
+        }
+        CHECK(diff == 7);
+        CHECK(memcmp(R.log[lut].bytes, ssd1677_lut_partial, 50) == 0);
+    }
+    // bytes 105..109 (gate, source, VCOM) stay stock
+    CHECK(cmd_is(nth_cmd(0x03, 0), 0x03, &ssd1677_lut_partial[105], 1));
+    CHECK(cmd_is(nth_cmd(0x04, 0), 0x04, &ssd1677_lut_partial[106], 3));
+    CHECK(cmd_is(nth_cmd(0x2C, 0), 0x2C, &ssd1677_lut_partial[109], 1));
+
+    epd_ssd1677_timing_t bad = t;
+    bad.tp[0][0] = 0x0E;
+    CHECK(epd_ssd1677_set_fast_timing(C, &bad) == ESP_ERR_INVALID_ARG);
+    bad = t;
+    bad.rp[3] = 1;
+    CHECK(epd_ssd1677_set_fast_timing(C, &bad) == ESP_ERR_INVALID_ARG);
+    epd_ssd1677_timing_t now;
+    epd_ssd1677_fast_timing(C, &now);
+    CHECK(memcmp(&now, &t, sizeof(t)) == 0);              // refused: unchanged
+    CHECK(epd_ssd1677_reinit(C) == ESP_OK);
+    epd_ssd1677_fast_timing(C, &now);
+    CHECK(memcmp(&now, &t, sizeof(t)) == 0);              // kept across reinit
+    CHECK(epd_ssd1677_set_fast_timing(C, NULL) == ESP_OK);   // back to stock
+    epd_ssd1677_fast_timing(C, &now);
+    CHECK(now.tp[0][0] == 0x0D && now.fr[4] == 0x22);
+}
+
+// The candidates of the LUT sweep (plan 9 Task 8), numbered as on the panel
+static void test_ssd1677_lut_candidates(void)
+{
+    setup(true);
+    epd_ssd1677_timing_t stock, c;
+    epd_ssd1677_partial_timing(C, &stock);
+    CHECK(epd_ssd1677_lut_candidate(1, &c) == ESP_OK && memcmp(&c, &stock, sizeof(c)) == 0);
+    const uint8_t fr[] = {0, 0x22, 0x44, 0x44, 0x55, 0x55};
+    const uint8_t tp0[] = {0, 0x0D, 0x0D, 6, 0x0D, 6};
+    for (uint8_t id = 1; id <= EPD_SSD1677_LUT_CANDIDATES; id++) {
+        CHECK(epd_ssd1677_lut_candidate(id, &c) == ESP_OK);
+        CHECK(c.fr[0] == fr[id] && c.fr[4] == fr[id] && c.tp[0][0] == tp0[id]);
+        epd_ssd1677_timing_t rest = c, ref = stock;
+        rest.tp[0][0] = ref.tp[0][0] = 0;
+        memset(rest.fr, 0, sizeof(rest.fr));
+        memset(ref.fr, 0, sizeof(ref.fr));
+        CHECK(memcmp(&rest, &ref, sizeof(rest)) == 0);    // nothing else moves
+        CHECK(epd_ssd1677_set_partial_timing(C, &c) == ESP_OK);
+        CHECK(epd_ssd1677_set_fast_timing(C, &c) == ESP_OK);
+    }
+    CHECK(epd_ssd1677_lut_candidate(0, &c) == ESP_ERR_INVALID_ARG);
+    CHECK(epd_ssd1677_lut_candidate(EPD_SSD1677_LUT_CANDIDATES + 1, &c) == ESP_ERR_INVALID_ARG);
+}
+
+// init applies the picked candidates of ssd1677_lut.c to both tables
+static void test_ssd1677_init_applies_picks(void)
+{
+    epd_bus_rec_free(&R);
+    epd_bus_rec_init(&R);
+    epd_ssd1677_free(C);
+    C = NULL;
+    const epd_ssd1677_cfg_t cfg = {.bus = &R.bus, .pan_w = 800, .pan_h = 480, .auto_old_plane = true};
+    CHECK(epd_ssd1677_init(&cfg, &C) == ESP_OK);
+    epd_ssd1677_timing_t want, got;
+    CHECK(epd_ssd1677_lut_candidate(ssd1677_lut_pick_partial, &want) == ESP_OK);
+    epd_ssd1677_partial_timing(C, &got);
+    CHECK(memcmp(&want, &got, sizeof(got)) == 0);
+    CHECK(epd_ssd1677_lut_candidate(ssd1677_lut_pick_fast, &want) == ESP_OK);
+    epd_ssd1677_fast_timing(C, &got);
+    CHECK(memcmp(&want, &got, sizeof(got)) == 0);
+}
+
 int main(void)
 {
     test_ssd1677_arm_waits_for_busy_high();
@@ -321,6 +501,11 @@ int main(void)
     test_ssd1677_deep_sleep();
     test_ssd1677_lut_patch_only_timing_bytes();
     test_ssd1677_partial_timing_roundtrip();
+    test_ssd1677_fast_lut_used_for_fast_only();
+    test_ssd1677_same_tables_no_reload();
+    test_ssd1677_fast_patch_only_timing_bytes();
+    test_ssd1677_lut_candidates();
+    test_ssd1677_init_applies_picks();
     epd_ssd1677_free(C);
     epd_bus_rec_free(&R);
     TEST_DONE("ssd1677");

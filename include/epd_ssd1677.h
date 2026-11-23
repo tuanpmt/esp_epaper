@@ -66,6 +66,20 @@ void epd_ssd1677_partial_timing(const epd_ssd1677_t *c, epd_ssd1677_timing_t *ou
 // and the current timing stays. Frame rate bytes are free. Kept across reinit.
 esp_err_t epd_ssd1677_set_partial_timing(epd_ssd1677_t *c, const epd_ssd1677_timing_t *t);
 
+// A second patchable copy of the stock partial table, used by EPD_M_FAST
+// (interaction) only; PARTIAL and TRANSITION use the partial table. Same
+// rule: TP/RP shorter than stock, frame rate free, NULL restores stock.
+// While both tables hold the same bytes, switching between them reloads nothing.
+esp_err_t epd_ssd1677_set_fast_timing(epd_ssd1677_t *c, const epd_ssd1677_timing_t *t);
+void epd_ssd1677_fast_timing(const epd_ssd1677_t *c, epd_ssd1677_timing_t *out);
+
+// Timing candidates of the 3.97in LUT sweep (plan 9 Task 8), numbered as the
+// black squares the sweep draws: 1 stock (561 ms), 2 FR 0x44 (391 ms),
+// 3 FR 0x44 + TP A of group 0 = 6, 4 FR 0x55, 5 FR 0x55 + TP A of group 0 = 6.
+// epd_ssd1677_init loads the picks of ssd1677_lut.c into both tables.
+#define EPD_SSD1677_LUT_CANDIDATES 5
+esp_err_t epd_ssd1677_lut_candidate(uint8_t id, epd_ssd1677_timing_t *out);
+
 #ifdef __cplusplus
 }
 #endif

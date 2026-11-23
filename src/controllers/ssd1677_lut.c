@@ -8,6 +8,12 @@
 
 #include "ssd1677_lut.h"
 
+// Partial timing picks (candidate numbers of epd_ssd1677_lut_candidate).
+// Plan 9 decision D4 picks them from panel photos of the Task 8 sweep; until
+// then both stay on the stock table (1: 561 ms per partial on the device).
+const uint8_t ssd1677_lut_pick_partial = 1;
+const uint8_t ssd1677_lut_pick_fast = 1;
+
 const uint8_t ssd1677_lut_fast[SSD1677_LUT_SIZE] = {
     0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
