@@ -133,6 +133,20 @@ static void test_ssd1677_partial_writes_old_plane_after(void)
     CHECK(nth_cmd(0x26, 0) < 0);
 }
 
+// A transition runs on the partial LUT and keeps the old plane like a partial
+static void test_ssd1677_transition_is_partial(void)
+{
+    uint8_t plane[800 / 8 * 480] = {0};
+    setup(false);
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_TRANSITION, on_done, NULL) == ESP_OK);
+    CHECK(cmd_is(nth_cmd(0x22, 0), 0x22, (const uint8_t[]){0xCF}, 1));
+    epd_bus_rec_fire_busy(&R);
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_after(C, EPD_M_TRANSITION, (epd_rect_t){0, 0, 32, 16}, plane, 100) == ESP_OK);
+    CHECK(nth_cmd(0x26, 0) >= 0);
+}
+
 static void test_ssd1677_lut_cache(void)
 {
     setup(false);
@@ -300,6 +314,7 @@ int main(void)
     test_ssd1677_init_sequence();
     test_ssd1677_window_math();
     test_ssd1677_partial_writes_old_plane_after();
+    test_ssd1677_transition_is_partial();
     test_ssd1677_lut_cache();
     test_ssd1677_gray_mode();
     test_ssd1677_busy_timeout();

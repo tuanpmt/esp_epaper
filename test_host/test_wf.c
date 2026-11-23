@@ -141,6 +141,14 @@ static void test_wf_gating_cold(void)
     CHECK(epd_wf_kind_for(EPD_M_GRAY, 2, true) == EPD_WF_GL16);
 }
 
+// A transition (screen change without a flash) is a differential DU, as a partial
+static void test_wf_transition_is_du(void)
+{
+    CHECK(epd_wf_kind_for(EPD_M_TRANSITION, 25, true) == EPD_WF_DU);
+    CHECK(epd_wf_kind_for(EPD_M_TRANSITION, 4, true) == EPD_WF_GC16);
+    CHECK(epd_wf_rule_for(EPD_M_TRANSITION, EPD_WF_DU) == EPD_WF_SKIP_SAME_KEEP_BLACK);
+}
+
 // Reference: one bus byte at a time (the first, plain implementation)
 static void ref_phase(const uint8_t *lut, const uint8_t *cur, const uint8_t *next, size_t ps, uint8_t *out, size_t os,
                       epd_rect_t b)
@@ -270,6 +278,7 @@ int main(void)
     test_wf_band_align();
     test_wf_pick_nearest_range();
     test_wf_gating_cold();
+    test_wf_transition_is_du();
     test_wf_phase_words_match_bytes();
     test_wf_phase2_matches_two_calls();
     test_wf_phase_same();

@@ -380,6 +380,7 @@ epd_wf_kind_t epd_wf_kind_for(epd_mode_t m, int temp_c, bool temp_valid)
     case EPD_M_FAST:    // stock profile 0 "Clear": DU 20 for every DU refresh (epd_refresh.cc:227-229)
         return fast_ok ? EPD_WF_DU : EPD_WF_GC16;
     case EPD_M_PARTIAL:
+    case EPD_M_TRANSITION:
         return fast_ok ? EPD_WF_DU : EPD_WF_GC16;
     case EPD_M_GRAY:
         return EPD_WF_GL16;

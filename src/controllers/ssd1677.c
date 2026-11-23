@@ -268,6 +268,7 @@ esp_err_t epd_ssd1677_after(epd_ssd1677_t *c, epd_mode_t mode, epd_rect_t r, con
     case EPD_M_FULL_CLEAN:
         return cmd1(c, CMD_POST_FULL, 0x01);    // stock non-optimised path: after BUSY of a full refresh
     case EPD_M_PARTIAL:
+    case EPD_M_TRANSITION:
     case EPD_M_FAST:
         return c->cfg.auto_old_plane ? ESP_OK : epd_ssd1677_write(c, EPD_SSD1677_RAM_OLD, r, bw_plane, stride);
     case EPD_M_GRAY: {
