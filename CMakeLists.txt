@@ -18,6 +18,7 @@ idf_component_register(
         "src/epd_quant.c"
         "src/epd_dirty.c"
         "src/epd_ghost.c"
+        "src/epd_plane.c"
         "src/epd_round.c"
         "src/epd_par_timing.c"
         "src/epd_wf.c"
@@ -46,6 +47,7 @@ idf_component_register(
 )
 
 # The waveform inner loop runs once per panel byte per phase (85 Hz) and the
-# quantizer once per pixel per LVGL frame: optimise them even in debug (-Og)
+# quantizer once per pixel per LVGL frame, the plane compare once per panel
+# byte per refresh: optimise them even in debug (-Og)
 # builds; the last -O on the command line wins
-set_source_files_properties("src/epd_wf.c" "src/epd_wf_mt.c" "src/epd_quant.c" PROPERTIES COMPILE_OPTIONS "-O2")
+set_source_files_properties("src/epd_wf.c" "src/epd_wf_mt.c" "src/epd_quant.c" "src/epd_plane.c" PROPERTIES COMPILE_OPTIONS "-O2")
