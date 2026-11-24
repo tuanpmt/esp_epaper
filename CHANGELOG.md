@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New example `examples/esp32s3_ssd1677_lvgl`: the minimal v3 pipeline (SSD1677 + `epd_lvgl` L8 + `epd_quant` dithering, synchronous refresh) on the Metalio E-Ink 4. The v2 examples still use the removed glue.
 - `epd_ssd1677`: `epd_ssd1677_partial_timing()` / `epd_ssd1677_set_partial_timing()` patch only the TP/RP and frame rate bytes of the stock partial LUT for on-device tuning; timing may only get shorter than stock, VS rows and voltages never change.
 
 ## 3.0.0

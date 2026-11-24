@@ -1,0 +1,6 @@
+dependencies:
+  idf: ">=6.1"
+  lvgl/lvgl: "9.6.0"
+  esp_epaper:
+    version: "*"
+    path: "../../.."

@@ -411,6 +411,7 @@ See the `examples/` folder for complete examples:
 
 | Example | Board | Description |
 |---------|-------|-------------|
+| [esp32s3_ssd1677_lvgl](examples/esp32s3_ssd1677_lvgl) | Metalio E-Ink 4 | v3 pipeline: SSD1677 800x480, LVGL 9.6 L8, dithered partial refresh |
 | [esp32s3_epaper_154](examples/esp32s3_epaper_154) | ESP32-S3-ePaper-1.54 | 1.54" BW, hinted Vietnamese fonts, optional 4-gray mode |
 | [esp32s3_photopainter](examples/esp32s3_photopainter) | ESP32-S3-PhotoPainter | 7.3" 6-Color with dithering |
 | [esp32_wroom_generic](examples/esp32_wroom_generic) | ESP32-WROOM-32D | Generic SSD16xx, responsive UI |

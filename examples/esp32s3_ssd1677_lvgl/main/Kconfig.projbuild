@@ -1,0 +1,42 @@
+menu "SSD1677 LVGL example"
+
+    config EXAMPLE_EPD_MOSI
+        int "EPD MOSI GPIO"
+        default 8
+    config EXAMPLE_EPD_SCLK
+        int "EPD SCLK GPIO"
+        default 14
+    config EXAMPLE_EPD_CS
+        int "EPD CS GPIO"
+        default 45
+    config EXAMPLE_EPD_DC
+        int "EPD DC GPIO"
+        default 13
+    config EXAMPLE_EPD_RST
+        int "EPD RST GPIO"
+        default 18
+    config EXAMPLE_EPD_BUSY
+        int "EPD BUSY GPIO"
+        default 9
+
+    config EXAMPLE_SCREEN_PWR_TCA9555
+        bool "Turn the screen supply on through a TCA9555 (Metalio E-Ink 4)"
+        default y
+        help
+            The Metalio E-Ink 4 powers the panel socket from TCA9555 pin P0.5
+            (I2C SDA 41, SCL 42, address 0x20). Turn this off on boards whose
+            panel is always powered.
+    config EXAMPLE_TCA_SDA
+        int "TCA9555 I2C SDA GPIO"
+        depends on EXAMPLE_SCREEN_PWR_TCA9555
+        default 41
+    config EXAMPLE_TCA_SCL
+        int "TCA9555 I2C SCL GPIO"
+        depends on EXAMPLE_SCREEN_PWR_TCA9555
+        default 42
+    config EXAMPLE_TCA_PIN
+        int "TCA9555 pin of the screen supply (0..15)"
+        depends on EXAMPLE_SCREEN_PWR_TCA9555
+        default 5
+
+endmenu
