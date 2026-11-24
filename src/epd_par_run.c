@@ -3,10 +3,12 @@
 #include <string.h>
 #include "epd_par_run.h"
 
-static epd_run_result_t finish(const epd_par_run_ops_t *o, epd_run_result_t r, uint64_t hv_t0,
+static epd_run_result_t finish(const epd_par_run_ops_t *o, epd_run_result_t r, uint64_t hv_t0, bool keep,
                                epd_par_run_stats_t *st)
 {
-    o->hv_off(o->ctx);      // every path: rails off exactly once
+    if (r != EPD_RUN_OK || !keep) {
+        o->hv_off(o->ctx);  // every path: rails off exactly once, unless a good run hands them on
+    }
     st->hv_us = (uint32_t)(o->now_us(o->ctx) - hv_t0);
     st->unknown = r != EPD_RUN_OK && r != EPD_RUN_HV_FAIL;
     return r;
@@ -15,10 +17,18 @@ static epd_run_result_t finish(const epd_par_run_ops_t *o, epd_run_result_t r, u
 epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32_t phase_hz,
                              uint32_t budget_ms, uint8_t *const buf[2], epd_par_run_stats_t *st)
 {
+    return epd_par_run_ex(o, phases, phase_hz, budget_ms, buf, NULL, st);
+}
+
+epd_run_result_t epd_par_run_ex(const epd_par_run_ops_t *o, uint16_t phases, uint32_t phase_hz,
+                                uint32_t budget_ms, uint8_t *const buf[2], const epd_par_run_opts_t *opt,
+                                epd_par_run_stats_t *st)
+{
     memset(st, 0, sizeof(*st));
+    const bool keep = opt && opt->keep_rails;
     const uint64_t hv_t0 = o->now_us(o->ctx);
-    if (o->hv_on(o->ctx) != ESP_OK) {
-        return finish(o, EPD_RUN_HV_FAIL, hv_t0, st);
+    if (!(opt && opt->rails_on) && o->hv_on(o->ctx) != ESP_OK) {
+        return finish(o, EPD_RUN_HV_FAIL, hv_t0, keep, st);
     }
     // The budget limits the time with the rails up, from the return of hv_on:
     // hv_on's own time (PMIC wake from SLEEP, register writes, PWR_GOOD wait)
@@ -51,7 +61,7 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         // after phase 0 only real faults stop the run: scan errors, PWR_GOOD
         // drop, and the BSP high-voltage watchdog outside this loop.
         if (k == 0 && start - rails_t0 + (uint64_t)phases * phase_us > budget_us) {
-            const epd_run_result_t r = finish(o, EPD_RUN_BUDGET, hv_t0, st);
+            const epd_run_result_t r = finish(o, EPD_RUN_BUDGET, hv_t0, keep, st);
             st->unknown = false;    // nothing was scanned: the panel keeps its image
             return r;
         }
@@ -61,7 +71,7 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         const uint32_t lag = (uint32_t)(start - slot);
         st->lag_us_max = lag > st->lag_us_max ? lag : st->lag_us_max;
         if (o->scan_start(o->ctx, buf[bi]) != ESP_OK) {
-            return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, st);
+            return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, keep, st);
         }
         // While the frame scans: PWR_GOOD (an I2C read is longer than the
         // slack between two frames of the timeline), then the next phase
@@ -70,7 +80,7 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
         const uint32_t pg_us = (uint32_t)(o->now_us(o->ctx) - t);
         st->pg_us_max = pg_us > st->pg_us_max ? pg_us : st->pg_us_max;
         if (!pg) {
-            const epd_run_result_t r = finish(o, EPD_RUN_PG_DROP, hv_t0, st);    // XOE low, rails off now
+            const epd_run_result_t r = finish(o, EPD_RUN_PG_DROP, hv_t0, keep, st);    // XOE low, rails off now
             o->scan_wait(o->ctx);       // then let the undriven frame end
             return r;
         }
@@ -86,12 +96,12 @@ epd_run_result_t epd_par_run(const epd_par_run_ops_t *o, uint16_t phases, uint32
             st->compute_max_us = c > st->compute_max_us ? c : st->compute_max_us;
         }
         if (o->scan_wait(o->ctx) != ESP_OK) {
-            return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, st);
+            return finish(o, EPD_RUN_SCAN_FAIL, hv_t0, keep, st);
         }
         const uint32_t fr = (uint32_t)(o->now_us(o->ctx) - start);
         st->frame_us_max = fr > st->frame_us_max ? fr : st->frame_us_max;
         st->phases_done = (uint16_t)(k + 1);
         bi = next_bi;
     }
-    return finish(o, EPD_RUN_OK, hv_t0, st);
+    return finish(o, EPD_RUN_OK, hv_t0, keep, st);
 }

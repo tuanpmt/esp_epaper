@@ -57,6 +57,21 @@ typedef struct {
 epd_run_result_t epd_par_run(const epd_par_run_ops_t *ops, uint16_t phases, uint32_t phase_hz,
                              uint32_t budget_ms, uint8_t *const buf[2], epd_par_run_stats_t *st);
 
+// Rails across a burst of runs (plan 9 T6). The caller owns the hold: it
+// decides how long the rails may stay up without a scan, re-arms its
+// high-voltage watchdog, and calls hv_off when the hold ends.
+typedef struct {
+    bool rails_on;      // rails already up from the previous run: skip hv_on
+    bool keep_rails;    // leave the rails up after a successful run (never after an error)
+} epd_par_run_opts_t;
+
+// epd_par_run with options (NULL: rails on at the start, off at the end).
+// With rails_on the budget counts from the call. Any result but EPD_RUN_OK
+// turns the rails off, keep_rails or not.
+epd_run_result_t epd_par_run_ex(const epd_par_run_ops_t *ops, uint16_t phases, uint32_t phase_hz,
+                                uint32_t budget_ms, uint8_t *const buf[2], const epd_par_run_opts_t *opt,
+                                epd_par_run_stats_t *st);
+
 #ifdef __cplusplus
 }
 #endif

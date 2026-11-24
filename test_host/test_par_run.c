@@ -233,6 +233,69 @@ static void test_run_budget_starts_after_hv_on(void)
     CHECK(st.hv_on_us == 850000);
 }
 
+// Plan 9 T6: rails held from the previous run of a burst. hv_on is skipped,
+// and the run keeps the rails up for the next one when asked; every error
+// still powers off.
+static void test_run_keep_rails_skips_hv_on(void)
+{
+    setup();
+    const epd_par_run_opts_t o = {.rails_on = true, .keep_rails = false};
+    epd_par_run_stats_t st;
+    CHECK(epd_par_run_ex(&ops, 2, 85, 1000, bufs, &o, &st) == EPD_RUN_OK);
+    CHECK(strcmp(f.log, "C0 S0 P C1 W S1 P W OFF ") == 0);
+    CHECK(f.hv_ons == 0 && f.hv_offs == 1 && st.hv_on_us == 0);
+}
+
+static void test_run_keep_rails_leaves_on(void)
+{
+    setup();
+    const epd_par_run_opts_t o = {.rails_on = false, .keep_rails = true};
+    epd_par_run_stats_t st;
+    CHECK(epd_par_run_ex(&ops, 2, 85, 1000, bufs, &o, &st) == EPD_RUN_OK);
+    CHECK(strcmp(f.log, "ON C0 S0 P C1 W S1 P W ") == 0);
+    CHECK(f.hv_offs == 0 && !st.unknown && st.phases_done == 2);
+    // the next run of the burst: neither on nor off
+    memset(f.log, 0, sizeof(f.log));
+    const epd_par_run_opts_t o2 = {.rails_on = true, .keep_rails = true};
+    CHECK(epd_par_run_ex(&ops, 1, 85, 1000, bufs, &o2, &st) == EPD_RUN_OK);
+    CHECK(strcmp(f.log, "C0 S2 P W ") == 0);     // scans count on from the first run
+    CHECK(f.hv_ons == 1 && f.hv_offs == 0);
+}
+
+// With the rails already up the budget starts at the call: a run that does
+// not fit is refused before phase 0, and the rails go off (nothing scanned)
+static void test_run_budget_with_rails_on(void)
+{
+    setup();
+    const epd_par_run_opts_t o = {.rails_on = true, .keep_rails = true};
+    epd_par_run_stats_t st;
+    CHECK(epd_par_run_ex(&ops, 48, 85, 300, bufs, &o, &st) == EPD_RUN_BUDGET);
+    CHECK(f.scans == 0 && f.hv_ons == 0 && f.hv_offs == 1);
+    CHECK(!st.unknown);
+    setup();
+    CHECK(epd_par_run_ex(&ops, 20, 85, 600, bufs, &o, &st) == EPD_RUN_OK);
+    CHECK(st.phases_done == 20 && f.hv_offs == 0);
+}
+
+static void test_run_error_turns_rails_off_even_with_keep(void)
+{
+    const epd_par_run_opts_t o = {.rails_on = true, .keep_rails = true};
+    epd_par_run_stats_t st;
+    setup();
+    f.pg_fail_at = 1;
+    CHECK(epd_par_run_ex(&ops, 6, 85, 1000, bufs, &o, &st) == EPD_RUN_PG_DROP);
+    CHECK(f.hv_offs == 1 && st.unknown);
+    setup();
+    f.scan_fail_at = 2;
+    CHECK(epd_par_run_ex(&ops, 6, 85, 1000, bufs, &o, &st) == EPD_RUN_SCAN_FAIL);
+    CHECK(f.hv_offs == 1 && st.unknown);
+    setup();
+    f.hv_fail = true;
+    const epd_par_run_opts_t o3 = {.rails_on = false, .keep_rails = true};
+    CHECK(epd_par_run_ex(&ops, 6, 85, 1000, bufs, &o3, &st) == EPD_RUN_HV_FAIL);
+    CHECK(f.hv_offs == 1 && f.scans == 0);
+}
+
 int main(void)
 {
     test_run_order_double_buffer();
@@ -245,5 +308,9 @@ int main(void)
     test_run_hv_fail_no_scan();
     test_run_reuses_identical_phase();
     test_run_phase_timing_stats();
+    test_run_keep_rails_skips_hv_on();
+    test_run_keep_rails_leaves_on();
+    test_run_budget_with_rails_on();
+    test_run_error_turns_rails_off_even_with_keep();
     TEST_DONE("par_run");
 }
