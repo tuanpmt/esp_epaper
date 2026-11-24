@@ -8,14 +8,14 @@
 
 #include "ssd1677_lut.h"
 
-// Partial timing picks (candidate numbers of epd_ssd1677_lut_candidate),
-// chosen by the owner from panel photos of the plan 9 Task 8 sweep (ten
-// back-to-back partials each, measured on the device):
-//   1 stock 561 ms, 2 FR 0x44 392 ms, 3 FR 0x44 + TP A6 322 ms,
-//   4 FR 0x55 358 ms, 5 FR 0x55 + TP A6 302 ms.
-// Page turns and screen changes: 4 (light ghosting, cleared by the ghost
-// budget). Buttons (FAST, small areas, redrawn on the next screen change): 5.
-const uint8_t ssd1677_lut_pick_partial = 4;
+// Table picks (epd_ssd1677_table ids). Plan 9 Task 8 sweep (ten
+// back-to-back partials each): 1 stock 561 ms, 2 FR 0x44 392 ms, 3 FR 0x44 +
+// TP A6 322 ms, 4 FR 0x55 358 ms, 5 FR 0x55 + TP A6 302 ms. Plan 9 Task 12
+// photo round (2026-11-24, launcher -> Settings -> Typad -> launcher): 4 left
+// the previous screen readable in gray; 8 (FR 0x55 + a 4-frame deepen phase
+// on both directions, 358 ms, no extra time) removed it.
+// Page turns and screen changes: 8. Buttons (FAST, small areas): 5.
+const uint8_t ssd1677_lut_pick_partial = 8;
 const uint8_t ssd1677_lut_pick_fast = 5;
 
 const uint8_t ssd1677_lut_fast[SSD1677_LUT_SIZE] = {

@@ -479,13 +479,14 @@ static void test_ssd1677_init_applies_picks(void)
     C = NULL;
     const epd_ssd1677_cfg_t cfg = {.bus = &R.bus, .pan_w = 800, .pan_h = 480, .auto_old_plane = true};
     CHECK(epd_ssd1677_init(&cfg, &C) == ESP_OK);
-    epd_ssd1677_timing_t want, got;
-    CHECK(epd_ssd1677_lut_candidate(ssd1677_lut_pick_partial, &want) == ESP_OK);
-    epd_ssd1677_partial_timing(C, &got);
-    CHECK(memcmp(&want, &got, sizeof(got)) == 0);
-    CHECK(epd_ssd1677_lut_candidate(ssd1677_lut_pick_fast, &want) == ESP_OK);
+    CHECK(epd_ssd1677_table_in_use(C, EPD_SSD1677_ROLE_PAGE) == ssd1677_lut_pick_partial);
+    CHECK(epd_ssd1677_table_in_use(C, EPD_SSD1677_ROLE_SCREEN) == ssd1677_lut_pick_partial);
+    CHECK(epd_ssd1677_table_in_use(C, EPD_SSD1677_ROLE_BUTTON) == ssd1677_lut_pick_fast);
+    uint8_t want[EPD_SSD1677_LUT_SIZE];
+    CHECK(epd_ssd1677_table(ssd1677_lut_pick_fast, want) == ESP_OK);
+    epd_ssd1677_timing_t got;
     epd_ssd1677_fast_timing(C, &got);
-    CHECK(memcmp(&want, &got, sizeof(got)) == 0);
+    CHECK(got.tp[0][0] == want[50] && got.fr[0] == want[100]);
 }
 
 // Candidate tables of plan 9 Task 12: all inside the safety envelope, 1..5
