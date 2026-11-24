@@ -44,8 +44,9 @@
 #define LUT_FR_BYTES 5
 
 // LUT_FULL: the stock "fast update" table of full cleans (0xC7); LUT_QUICK:
-// the fast (interaction) copy of the partial table
-typedef enum { LUT_NONE, LUT_FULL, LUT_PARTIAL, LUT_QUICK, LUT_GRAY } lut_t;
+// the fast (interaction) copy of the partial table; LUT_TRANS: the copy used
+// by screen changes (EPD_M_TRANSITION)
+typedef enum { LUT_NONE, LUT_FULL, LUT_PARTIAL, LUT_QUICK, LUT_GRAY, LUT_TRANS } lut_t;
 
 struct epd_ssd1677 {
     epd_ssd1677_cfg_t cfg;
@@ -53,6 +54,8 @@ struct epd_ssd1677 {
     bool border_partial;    // border waveform currently set for partial refreshes
     uint8_t partial_lut[SSD1677_LUT_SIZE];   // stock partial table with the tuned timing
     uint8_t quick_lut[SSD1677_LUT_SIZE];     // same for EPD_M_FAST
+    uint8_t trans_lut[SSD1677_LUT_SIZE];     // same for EPD_M_TRANSITION
+    uint8_t table_id[EPD_SSD1677_ROLE_COUNT];   // candidate table per role, 0 = set by timing
     uint8_t *row_buf;       // one window, packed contiguously for a single data transfer
     size_t row_buf_size;
 };
@@ -88,6 +91,8 @@ static const uint8_t *lut_table(const epd_ssd1677_t *c, lut_t which)
         return c->partial_lut;
     case LUT_QUICK:
         return c->quick_lut;
+    case LUT_TRANS:
+        return c->trans_lut;
     default:
         return ssd1677_lut_gray4;
     }
@@ -95,7 +100,7 @@ static const uint8_t *lut_table(const epd_ssd1677_t *c, lut_t which)
 
 static bool partial_kind(lut_t which)
 {
-    return which == LUT_PARTIAL || which == LUT_QUICK;
+    return which == LUT_PARTIAL || which == LUT_QUICK || which == LUT_TRANS;
 }
 
 static esp_err_t load_lut(epd_ssd1677_t *c, lut_t which)
@@ -190,13 +195,10 @@ esp_err_t epd_ssd1677_init(const epd_ssd1677_cfg_t *cfg, epd_ssd1677_t **out)
     c->cfg = *cfg;
     memcpy(c->partial_lut, ssd1677_lut_partial, SSD1677_LUT_SIZE);
     memcpy(c->quick_lut, ssd1677_lut_partial, SSD1677_LUT_SIZE);
-    epd_ssd1677_timing_t t;
-    if (epd_ssd1677_lut_candidate(ssd1677_lut_pick_partial, &t) == ESP_OK) {
-        epd_ssd1677_set_partial_timing(c, &t);
-    }
-    if (epd_ssd1677_lut_candidate(ssd1677_lut_pick_fast, &t) == ESP_OK) {
-        epd_ssd1677_set_fast_timing(c, &t);
-    }
+    memcpy(c->trans_lut, ssd1677_lut_partial, SSD1677_LUT_SIZE);
+    epd_ssd1677_use_table(c, EPD_SSD1677_ROLE_PAGE, ssd1677_lut_pick_partial);
+    epd_ssd1677_use_table(c, EPD_SSD1677_ROLE_SCREEN, ssd1677_lut_pick_partial);
+    epd_ssd1677_use_table(c, EPD_SSD1677_ROLE_BUTTON, ssd1677_lut_pick_fast);
     const esp_err_t err = init_sequence(c);
     if (err != ESP_OK) {
         free(c);
@@ -258,8 +260,9 @@ esp_err_t epd_ssd1677_start(epd_ssd1677_t *c, epd_mode_t mode, epd_busy_cb_t don
     }
     const lut_t want = mode == EPD_M_FULL_CLEAN ? LUT_FULL
                        : mode == EPD_M_GRAY     ? LUT_GRAY
-                       : mode == EPD_M_FAST     ? LUT_QUICK
-                                                : LUT_PARTIAL;
+                       : mode == EPD_M_FAST       ? LUT_QUICK
+                       : mode == EPD_M_TRANSITION ? LUT_TRANS
+                                                  : LUT_PARTIAL;
     esp_err_t err = ESP_OK;
     if (c->lut != want) {
         if (partial_kind(c->lut) && partial_kind(want) &&
@@ -380,8 +383,18 @@ static esp_err_t set_timing(epd_ssd1677_t *c, lut_t which, const epd_ssd1677_tim
         return ESP_ERR_INVALID_ARG;
     }
     const esp_err_t err = patch_timing(which == LUT_QUICK ? c->quick_lut : c->partial_lut, t);
-    if (err == ESP_OK && c->lut == which) {
-        c->lut = LUT_NONE;  // reload at the next start that uses it
+    if (err == ESP_OK && which == LUT_PARTIAL) {
+        memcpy(c->trans_lut, c->partial_lut, SSD1677_LUT_SIZE);    // screen changes follow page turns
+    }
+    if (err == ESP_OK) {
+        if (which == LUT_QUICK) {
+            c->table_id[EPD_SSD1677_ROLE_BUTTON] = 0;
+        } else {
+            c->table_id[EPD_SSD1677_ROLE_PAGE] = c->table_id[EPD_SSD1677_ROLE_SCREEN] = 0;
+        }
+        if (partial_kind(c->lut)) {
+            c->lut = LUT_NONE;  // reload at the next start that uses it
+        }
     }
     return err;
 }
@@ -423,4 +436,159 @@ esp_err_t epd_ssd1677_lut_candidate(uint8_t id, epd_ssd1677_timing_t *out)
         out->tp[0][0] = 6;
     }
     return ESP_OK;
+}
+
+// ---- Candidate tables (plan 9 Task 12) ----
+//
+// Each candidate is the stock partial table with its timing (FR, TP A of
+// group 0) and, for 8..12, VS rows of groups 0 and 1 changed. Row r of group
+// g is byte r * 10 + g, two bits per phase A..D (A in bits 7..6): 00 VSS,
+// 01 VSH1 (towards black), 10 VSL (towards white), 11 VSH2. Rows: 0 black
+// stays black, 1 black to white, 2 white to black, 3 white stays white,
+// 4 VCOM. Stock: group 0 drives the changing pixels for 13 frames (row 1
+// VSL, row 2 VSH1); group 1 gives the black pixels that stay black 4 frames
+// of VSH2. Voltages (bytes 105..111) never change.
+//
+// DC balance per candidate (VSH1 +15 V, VSL -15 V, 0x41 / 0x32):
+//   1..7   as stock: a changing pixel gets one polarity per change, so going
+//          white -> black -> white nets zero; static black gets 4 frames of
+//          VSH2 per run (stock behaviour), static white nothing.
+//   8..10  "deepen": group 1 repeats the change's polarity for 4 frames on
+//          both directions (VSL to white, VSH1 to black), symmetric, so a
+//          pixel going back and forth still nets zero.
+//   11     text: 8 plus 4 frames of VSL on white that stays white each run.
+//          Static white pixels accumulate negative drive until the next full
+//          clean (0xC7, balanced) of the ghost budget; mirrors the stock VSH2
+//          on static black. Do not ship without a ghost budget.
+//   12     A2: group 0 drives every pixel 8 frames to its level (static
+//          black VSH1, static white VSL), plus the stock VSH2 on static black.
+//          Static pixels accumulate one-sided drive per run; same caveat as 11.
+#define VS_ROW(r, g) ((r) * LUT_GROUPS + (g))
+#define PH_A_VSH1 0x40
+#define PH_A_VSL 0x80
+
+static const char *const s_table_names[EPD_SSD1677_LUT_TABLES + 1] = {
+    "",
+    "stock FR 0x22",
+    "FR 0x44",
+    "FR 0x44 + TP A6",
+    "FR 0x55 (page default)",
+    "FR 0x55 + TP A6 (button default)",
+    "FR 0x44 + TP A8",
+    "FR 0x55 + TP A8",
+    "FR 0x55 + deepen",
+    "FR 0x55 + TP A8 + deepen",
+    "FR 0x44 + deepen",
+    "text: FR 0x55 + deepen + white re-drive",
+    "A2: FR 0x55, every pixel driven 8 frames",
+};
+
+const char *epd_ssd1677_table_name(uint8_t id)
+{
+    return id >= 1 && id <= EPD_SSD1677_LUT_TABLES ? s_table_names[id] : NULL;
+}
+
+esp_err_t epd_ssd1677_table(uint8_t id, uint8_t out[EPD_SSD1677_LUT_SIZE])
+{
+    if (!out || id < 1 || id > EPD_SSD1677_LUT_TABLES) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t *t = out;
+    memcpy(t, ssd1677_lut_partial, SSD1677_LUT_SIZE);
+    uint8_t fr = 0x22, tp_a0 = 0x0D;
+    bool deepen = false, white = false, a2 = false;
+    switch (id) {
+    case 2: fr = 0x44; break;
+    case 3: fr = 0x44; tp_a0 = 6; break;
+    case 4: fr = 0x55; break;
+    case 5: fr = 0x55; tp_a0 = 6; break;
+    case 6: fr = 0x44; tp_a0 = 8; break;
+    case 7: fr = 0x55; tp_a0 = 8; break;
+    case 8: fr = 0x55; deepen = true; break;
+    case 9: fr = 0x55; tp_a0 = 8; deepen = true; break;
+    case 10: fr = 0x44; deepen = true; break;
+    case 11: fr = 0x55; deepen = true; white = true; break;
+    case 12: fr = 0x55; tp_a0 = 8; a2 = true; break;
+    default: break;
+    }
+    memset(&t[LUT_FR_AT], fr, LUT_FR_BYTES);
+    t[LUT_TIMING_AT] = tp_a0;
+    if (deepen) {
+        // Group 1 (4 frames, after the main drive): the changed pixels get
+        // their polarity again, white and black alike
+        t[VS_ROW(1, 1)] = PH_A_VSL;
+        t[VS_ROW(2, 1)] = PH_A_VSH1;
+    }
+    if (white) {
+        t[VS_ROW(3, 1)] = PH_A_VSL;     // white that stays white: 4 frames towards white
+    }
+    if (a2) {
+        t[VS_ROW(0, 0)] = PH_A_VSH1;    // every pixel to its level, changed or not
+        t[VS_ROW(3, 0)] = PH_A_VSL;
+    }
+    return epd_ssd1677_table_check(t);
+}
+
+// Every pixel then gets at most the 17 frames stock drives, none longer than
+// a stock frame, at stock voltages
+esp_err_t epd_ssd1677_table_check(const uint8_t *t)
+{
+    const uint8_t *s = ssd1677_lut_partial;
+    if (!t || memcmp(&t[SSD1677_LUT_WAVE_BYTES], &s[SSD1677_LUT_WAVE_BYTES],
+                     SSD1677_LUT_SIZE - SSD1677_LUT_WAVE_BYTES) != 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (int g = 0; g < LUT_GROUPS; g++) {
+        if (t[VS_ROW(4, g)] != s[VS_ROW(4, g)]) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        const uint8_t *tg = &t[LUT_TIMING_AT + g * LUT_GROUP_BYTES];
+        const uint8_t *sg = &s[LUT_TIMING_AT + g * LUT_GROUP_BYTES];
+        int frames = 0, stock = 0;
+        for (int i = 0; i < 4; i++) {
+            frames += tg[i];
+            stock += sg[i];
+        }
+        if (frames > stock || tg[4] > sg[4]) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        for (int r = 0; g >= 2 && r < 4; r++) {
+            if (t[VS_ROW(r, g)] != 0) {
+                return ESP_ERR_INVALID_ARG;
+            }
+        }
+    }
+    for (int i = 0; i < LUT_FR_BYTES; i++) {
+        const uint8_t f = t[LUT_FR_AT + i], sf = s[LUT_FR_AT + i];
+        if ((f >> 4) < (sf >> 4) || (f & 0x0F) < (sf & 0x0F)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t epd_ssd1677_use_table(epd_ssd1677_t *c, epd_ssd1677_role_t role, uint8_t id)
+{
+    if (!c || role >= EPD_SSD1677_ROLE_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t t[SSD1677_LUT_SIZE];
+    const esp_err_t err = epd_ssd1677_table(id, t);
+    if (err != ESP_OK) {
+        return err;
+    }
+    uint8_t *dst = role == EPD_SSD1677_ROLE_PAGE     ? c->partial_lut
+                   : role == EPD_SSD1677_ROLE_SCREEN ? c->trans_lut
+                                                     : c->quick_lut;
+    memcpy(dst, t, SSD1677_LUT_SIZE);
+    c->table_id[role] = id;
+    if (partial_kind(c->lut)) {
+        c->lut = LUT_NONE;  // reload at the next partial start
+    }
+    return ESP_OK;
+}
+
+uint8_t epd_ssd1677_table_in_use(const epd_ssd1677_t *c, epd_ssd1677_role_t role)
+{
+    return c && role < EPD_SSD1677_ROLE_COUNT ? c->table_id[role] : 0;
 }

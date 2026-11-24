@@ -488,8 +488,82 @@ static void test_ssd1677_init_applies_picks(void)
     CHECK(memcmp(&want, &got, sizeof(got)) == 0);
 }
 
+// Candidate tables of plan 9 Task 12: all inside the safety envelope, 1..5
+// equal to the timing candidates, voltages never touched
+static void test_ssd1677_tables_safe(void)
+{
+    uint8_t t[EPD_SSD1677_LUT_SIZE];
+    for (uint8_t id = 1; id <= EPD_SSD1677_LUT_TABLES; id++) {
+        CHECK(epd_ssd1677_table(id, t) == ESP_OK);
+        CHECK(epd_ssd1677_table_name(id) != NULL);
+        CHECK(memcmp(&t[105], &ssd1677_lut_partial[105], 7) == 0);
+        CHECK(memcmp(&t[40], &ssd1677_lut_partial[40], 10) == 0);   // VCOM row
+        int frames = 0;
+        for (int i = 50; i < 100; i++) {
+            frames += i % 5 == 4 ? 0 : t[i];
+        }
+        CHECK(frames <= 17);
+        if (id <= EPD_SSD1677_LUT_CANDIDATES) {
+            epd_ssd1677_timing_t c;
+            CHECK(epd_ssd1677_lut_candidate(id, &c) == ESP_OK);
+            CHECK(memcmp(t, ssd1677_lut_partial, 50) == 0);
+            CHECK(t[50] == c.tp[0][0] && t[100] == c.fr[0] && t[104] == c.fr[4]);
+        }
+    }
+    CHECK(epd_ssd1677_table(0, t) == ESP_ERR_INVALID_ARG);
+    CHECK(epd_ssd1677_table(EPD_SSD1677_LUT_TABLES + 1, t) == ESP_ERR_INVALID_ARG);
+    // deepen: both directions repeated in group 1 (DC balanced)
+    CHECK(epd_ssd1677_table(8, t) == ESP_OK && t[11] == 0x80 && t[21] == 0x40 && t[31] == 0);
+    // the envelope refuses voltages, longer phases, slower frames, late groups
+    uint8_t bad[EPD_SSD1677_LUT_SIZE];
+    memcpy(bad, ssd1677_lut_partial, sizeof(bad));
+    CHECK(epd_ssd1677_table_check(bad) == ESP_OK);
+    bad[107] ^= 1;
+    CHECK(epd_ssd1677_table_check(bad) == ESP_ERR_INVALID_ARG);
+    memcpy(bad, ssd1677_lut_partial, sizeof(bad));
+    bad[50] = 0x0E;
+    CHECK(epd_ssd1677_table_check(bad) == ESP_ERR_INVALID_ARG);
+    memcpy(bad, ssd1677_lut_partial, sizeof(bad));
+    bad[100] = 0x11;
+    CHECK(epd_ssd1677_table_check(bad) == ESP_ERR_INVALID_ARG);
+    memcpy(bad, ssd1677_lut_partial, sizeof(bad));
+    bad[12] = 0x40;
+    CHECK(epd_ssd1677_table_check(bad) == ESP_ERR_INVALID_ARG);
+}
+
+// Each role loads its own table; switching at run time reloads the LUT
+static void test_ssd1677_tables_per_role(void)
+{
+    epd_bus_rec_free(&R);
+    epd_bus_rec_init(&R);
+    epd_ssd1677_free(C);
+    C = NULL;
+    const epd_ssd1677_cfg_t cfg = {.bus = &R.bus, .pan_w = 800, .pan_h = 480, .auto_old_plane = true};
+    CHECK(epd_ssd1677_init(&cfg, &C) == ESP_OK);
+    CHECK(epd_ssd1677_table_in_use(C, EPD_SSD1677_ROLE_PAGE) == ssd1677_lut_pick_partial);
+    CHECK(epd_ssd1677_table_in_use(C, EPD_SSD1677_ROLE_SCREEN) == ssd1677_lut_pick_partial);
+    CHECK(epd_ssd1677_table_in_use(C, EPD_SSD1677_ROLE_BUTTON) == ssd1677_lut_pick_fast);
+    uint8_t want[EPD_SSD1677_LUT_SIZE];
+    CHECK(epd_ssd1677_use_table(C, EPD_SSD1677_ROLE_SCREEN, 11) == ESP_OK);
+    CHECK(epd_ssd1677_table(11, want) == ESP_OK);
+    epd_bus_rec_clear(&R);
+    CHECK(epd_ssd1677_start(C, EPD_M_TRANSITION, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    CHECK(lut_bytes_are(last_lut(), want));
+    CHECK(epd_ssd1677_table(ssd1677_lut_pick_partial, want) == ESP_OK);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    CHECK(lut_bytes_are(last_lut(), want));
+    CHECK(epd_ssd1677_use_table(C, EPD_SSD1677_ROLE_PAGE, 0) == ESP_ERR_INVALID_ARG);
+    CHECK(epd_ssd1677_use_table(C, EPD_SSD1677_ROLE_COUNT, 1) == ESP_ERR_INVALID_ARG);
+    CHECK(epd_ssd1677_set_partial_timing(C, NULL) == ESP_OK);
+    CHECK(epd_ssd1677_table_in_use(C, EPD_SSD1677_ROLE_PAGE) == 0);
+}
+
 int main(void)
 {
+    test_ssd1677_tables_safe();
+    test_ssd1677_tables_per_role();
     test_ssd1677_arm_waits_for_busy_high();
     test_ssd1677_init_sequence();
     test_ssd1677_window_math();

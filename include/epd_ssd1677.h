@@ -80,6 +80,31 @@ void epd_ssd1677_fast_timing(const epd_ssd1677_t *c, epd_ssd1677_timing_t *out);
 #define EPD_SSD1677_LUT_CANDIDATES 5
 esp_err_t epd_ssd1677_lut_candidate(uint8_t id, epd_ssd1677_timing_t *out);
 
+// Full partial tables per refresh role (plan 9 Task 12): page turns
+// (EPD_M_PARTIAL), screen changes (EPD_M_TRANSITION), buttons (EPD_M_FAST).
+// Tables 1..5 equal the timing candidates above; 6..12 add TP A8 and change
+// the VS rows of groups 0 and 1 (a "deepen" phase after the main drive, a
+// text table that also re-drives white, a direct-drive A2 table). Every
+// table passes epd_ssd1677_table_check. The timing setters above set PAGE
+// and SCREEN (partial) or BUTTON (fast) and mark the role's table id 0.
+#define EPD_SSD1677_LUT_SIZE 112
+#define EPD_SSD1677_LUT_TABLES 12
+typedef enum {
+    EPD_SSD1677_ROLE_PAGE,
+    EPD_SSD1677_ROLE_SCREEN,
+    EPD_SSD1677_ROLE_BUTTON,
+    EPD_SSD1677_ROLE_COUNT
+} epd_ssd1677_role_t;
+esp_err_t epd_ssd1677_table(uint8_t id, uint8_t out[EPD_SSD1677_LUT_SIZE]);
+const char *epd_ssd1677_table_name(uint8_t id);     // NULL for an unknown id
+// Safety envelope against the stock partial table: bytes 105..111 and the
+// VCOM row unchanged, groups 2..9 silent, per group no more frames than
+// stock and no repeat, frame rate not slower than stock
+esp_err_t epd_ssd1677_table_check(const uint8_t *lut);
+// Takes effect at the next start of that role (call from the task that owns c)
+esp_err_t epd_ssd1677_use_table(epd_ssd1677_t *c, epd_ssd1677_role_t role, uint8_t id);
+uint8_t epd_ssd1677_table_in_use(const epd_ssd1677_t *c, epd_ssd1677_role_t role);   // 0: set by timing
+
 #ifdef __cplusplus
 }
 #endif
