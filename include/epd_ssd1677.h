@@ -82,13 +82,14 @@ esp_err_t epd_ssd1677_lut_candidate(uint8_t id, epd_ssd1677_timing_t *out);
 
 // Full partial tables per refresh role (plan 9 Task 12): page turns
 // (EPD_M_PARTIAL), screen changes (EPD_M_TRANSITION), buttons (EPD_M_FAST).
-// Tables 1..5 equal the timing candidates above; 6..12 add TP A8 and change
+// Tables 1..5 equal the timing candidates above; 6..14 add TP A8 and change
 // the VS rows of groups 0 and 1 (a "deepen" phase after the main drive, a
 // text table that also re-drives white, a direct-drive A2 table). Every
-// table passes epd_ssd1677_table_check. The timing setters above set PAGE
+// table passes epd_ssd1677_table_check. 13 and 14 are the deepen phase at
+// slower frame rates (FR 0x33, stock 0x22): stronger erase for screen changes. The timing setters above set PAGE
 // and SCREEN (partial) or BUTTON (fast) and mark the role's table id 0.
 #define EPD_SSD1677_LUT_SIZE 112
-#define EPD_SSD1677_LUT_TABLES 12
+#define EPD_SSD1677_LUT_TABLES 14
 typedef enum {
     EPD_SSD1677_ROLE_PAGE,
     EPD_SSD1677_ROLE_SCREEN,

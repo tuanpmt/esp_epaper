@@ -453,7 +453,7 @@ esp_err_t epd_ssd1677_lut_candidate(uint8_t id, epd_ssd1677_timing_t *out)
 //   1..7   as stock: a changing pixel gets one polarity per change, so going
 //          white -> black -> white nets zero; static black gets 4 frames of
 //          VSH2 per run (stock behaviour), static white nothing.
-//   8..10  "deepen": group 1 repeats the change's polarity for 4 frames on
+//   8..10, 13, 14  "deepen": group 1 repeats the change's polarity for 4 frames on
 //          both directions (VSL to white, VSH1 to black), symmetric, so a
 //          pixel going back and forth still nets zero.
 //   11     text: 8 plus 4 frames of VSL on white that stays white each run.
@@ -481,6 +481,8 @@ static const char *const s_table_names[EPD_SSD1677_LUT_TABLES + 1] = {
     "FR 0x44 + deepen",
     "text: FR 0x55 + deepen + white re-drive",
     "A2: FR 0x55, every pixel driven 8 frames",
+    "erase: FR 0x33 + deepen",
+    "erase: stock FR 0x22 + deepen",
 };
 
 const char *epd_ssd1677_table_name(uint8_t id)
@@ -509,6 +511,8 @@ esp_err_t epd_ssd1677_table(uint8_t id, uint8_t out[EPD_SSD1677_LUT_SIZE])
     case 10: fr = 0x44; deepen = true; break;
     case 11: fr = 0x55; deepen = true; white = true; break;
     case 12: fr = 0x55; tp_a0 = 8; a2 = true; break;
+    case 13: fr = 0x33; deepen = true; break;
+    case 14: deepen = true; break;
     default: break;
     }
     memset(&t[LUT_FR_AT], fr, LUT_FR_BYTES);
