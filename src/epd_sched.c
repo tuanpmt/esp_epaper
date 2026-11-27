@@ -165,6 +165,20 @@ void epd_sched_done(epd_sched_t *s, uint32_t now_ms)
     s->commit_error = false;
 }
 
+void epd_sched_fail(epd_sched_t *s)
+{
+    if (!s->busy) {
+        return;
+    }
+    s->busy = false;
+    s->reinit_due = true;
+    s->commit_due = true;
+    s->commit_seq = s->run_seq;
+    s->commit_error = true;
+    s->force_full = true;
+    s->fail_pending = true;
+}
+
 static bool work_pending(const epd_sched_t *s)
 {
     return s->n > 0 || s->has_intent;
@@ -199,10 +213,12 @@ bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out)
         s->commit_seq = s->run_seq;
         s->commit_error = true;
         s->force_full = true;
+        s->fail_pending = false;
     }
     if (s->reinit_due) {
         s->reinit_due = false;
         out->kind = EPD_ACT_REINIT;
+        out->failed = s->fail_pending;
         return true;
     }
     if (s->commit_due) {
@@ -217,6 +233,8 @@ bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out)
         out->kind = EPD_ACT_COMMIT;
         out->seq = seq;
         out->error = s->commit_error;
+        out->failed = s->fail_pending;
+        s->fail_pending = false;
         return true;
     }
     if (s->hold && hold_over(s, now_ms)) {

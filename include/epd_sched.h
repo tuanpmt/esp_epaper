@@ -26,7 +26,8 @@ typedef struct {
     epd_rect_t rects[EPD_SCHED_MAX_RECTS];        // START: windows to write (full screen for GRAY/FULL_CLEAN)
     uint8_t n;
     uint32_t seq;                                 // COMMIT: highest intent seq shown (0 = frame without an intent)
-    bool error;                                   // COMMIT after a timeout
+    bool error;                                   // COMMIT after a timeout or a failed start
+    bool failed;                                  // REINIT/COMMIT of epd_sched_fail (not a BUSY timeout)
 } epd_act_t;
 
 // Private: use the functions below only
@@ -53,6 +54,7 @@ typedef struct {
     bool commit_due;
     uint32_t commit_seq;
     bool commit_error;
+    bool fail_pending;                            // the queued REINIT/COMMIT come from epd_sched_fail
     uint32_t last_seq;                            // highest non-zero seq committed so far
     // touch hold (epd_sched_hold)
     bool hold;
@@ -74,6 +76,11 @@ void epd_sched_force_full(epd_sched_t *s);       // invert changed / unpark / fi
 // epd_refresh.cc:439). An intent, a later until_ms of 0, or the deadline ends the hold.
 void epd_sched_hold(epd_sched_t *s, uint32_t until_ms);
 void epd_sched_done(epd_sched_t *s, uint32_t now_ms);                              // panel finished
+// The run START announced never got going (bus error, LUT load, BUSY irq):
+// queue the REINIT and the error COMMIT now instead of after busy_timeout_ms.
+// Both actions carry failed = true so callers do not count a BUSY timeout.
+// No-op when no run is in flight.
+void epd_sched_fail(epd_sched_t *s);
 bool epd_sched_next(epd_sched_t *s, uint32_t now_ms, epd_act_t *out);             // one action, false = idle
 uint32_t epd_sched_wait_ms(const epd_sched_t *s, uint32_t now_ms);                // until timeout check or hold end, UINT32_MAX idle
 bool epd_sched_idle(const epd_sched_t *s);       // nothing pending, nothing in flight (park may proceed)
