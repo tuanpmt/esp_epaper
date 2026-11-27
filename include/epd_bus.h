@@ -33,7 +33,11 @@ struct epd_bus {
     esp_err_t (*arm_busy_irq)(epd_bus_t *b, epd_busy_cb_t cb, void *ctx);
     // RST 10 ms low, 10 ms high (does not wait for BUSY)
     void (*reset)(epd_bus_t *b);
+    // Sleeps at least ms; may sleep longer (device: rounded up to a whole RTOS tick)
     void (*delay_ms)(epd_bus_t *b, uint32_t ms);
+    // Monotonic milliseconds. Waits take their limit from this, never from counting
+    // delay_ms calls (a 1 ms call really sleeps one tick, 10 ms at 100 Hz).
+    uint32_t (*now_ms)(epd_bus_t *b);
 };
 
 typedef struct {

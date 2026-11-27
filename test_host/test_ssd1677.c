@@ -177,6 +177,22 @@ static void test_ssd1677_gray_mode(void)
     CHECK(cmd_is(nth_cmd(0x2C, 0), 0x2C, (const uint8_t[]){0x30}, 1));   // 4-gray VCOM
 }
 
+// #539: the limit is 3 s of clock time even when every delay_ms(1) sleeps a 10 ms tick
+static void test_ssd1677_busy_timeout_real_time(void)
+{
+    setup(false);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);
+    epd_bus_rec_fire_busy(&R);
+    epd_bus_rec_set_busy(&R, true);
+    R.tick_ms = 10;
+    const uint32_t t0 = R.clock_ms;
+    CHECK(epd_ssd1677_start(C, EPD_M_FAST, on_done, NULL) == ESP_OK);
+    CHECK(epd_ssd1677_start(C, EPD_M_FULL_CLEAN, on_done, NULL) == ESP_ERR_TIMEOUT);
+    const uint32_t took = R.clock_ms - t0;
+    CHECK(took >= 3000 && took <= 3000 + 10);   // 3 s +- 1 tick, not 30 s
+    R.tick_ms = 0;
+}
+
 static void test_ssd1677_busy_timeout(void)
 {
     setup(false);
@@ -573,6 +589,7 @@ int main(void)
     test_ssd1677_lut_cache();
     test_ssd1677_gray_mode();
     test_ssd1677_busy_timeout();
+    test_ssd1677_busy_timeout_real_time();
     test_ssd1677_deep_sleep();
     test_ssd1677_lut_patch_only_timing_bytes();
     test_ssd1677_partial_timing_roundtrip();

@@ -27,6 +27,8 @@ typedef struct {
     epd_bus_t bus;          // first member: (epd_bus_t *)&rec works
     epd_rec_t *log;
     size_t n, cap;
+    uint32_t clock_ms;      // fake now_ms(); advanced by delay_ms
+    uint32_t tick_ms;       // every delay_ms sleeps at least this long (0 = exactly ms), like an RTOS tick
     bool busy_level;        // what busy() returns; set by the test
     uint32_t low_reads;     // the next low_reads busy() calls return false (BUSY not risen yet)
     bool reset_seen;        // arm before the first reset is refused, like the device
