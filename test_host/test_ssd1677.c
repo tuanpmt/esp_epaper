@@ -193,6 +193,21 @@ static void test_ssd1677_busy_timeout_real_time(void)
     R.tick_ms = 0;
 }
 
+// #539 item 2: BUSY never rises after 0x20: the wait for the rise ends after ~20 ms of clock
+// time even when every delay_ms(1) sleeps a 10 ms tick (was 20 calls = 200 ms)
+static void test_ssd1677_arm_rise_real_time(void)
+{
+    setup(false);
+    CHECK(epd_ssd1677_start(C, EPD_M_PARTIAL, on_done, NULL) == ESP_OK);   // LUT loaded
+    epd_bus_rec_fire_busy(&R);
+    R.tick_ms = 10;
+    const uint32_t t0 = R.clock_ms;
+    CHECK(epd_ssd1677_start(C, EPD_M_FAST, on_done, NULL) == ESP_OK);      // BUSY stays low
+    const uint32_t took = R.clock_ms - t0;
+    CHECK(took >= 20 && took <= 20 + 10);
+    R.tick_ms = 0;
+}
+
 static void test_ssd1677_busy_timeout(void)
 {
     setup(false);
@@ -590,6 +605,7 @@ int main(void)
     test_ssd1677_gray_mode();
     test_ssd1677_busy_timeout();
     test_ssd1677_busy_timeout_real_time();
+    test_ssd1677_arm_rise_real_time();
     test_ssd1677_deep_sleep();
     test_ssd1677_lut_patch_only_timing_bytes();
     test_ssd1677_partial_timing_roundtrip();

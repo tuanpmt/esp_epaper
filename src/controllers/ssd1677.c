@@ -297,8 +297,11 @@ esp_err_t epd_ssd1677_start(epd_ssd1677_t *c, epd_mode_t mode, epd_busy_cb_t don
         // BUSY rises shortly after 0x20; arming the idle interrupt before it
         // rises would report the refresh done at once. If it never rises the
         // refresh is armed anyway (the callback fires now, the run looks instant).
-        for (uint32_t ms = 0; ms < ARM_RISE_MAX_MS && !c->cfg.bus->busy(c->cfg.bus); ms++) {
-            c->cfg.bus->delay_ms(c->cfg.bus, 1);
+        // The limit is real time (bus now_ms): a delay_ms(1) call sleeps a whole tick (#539)
+        epd_bus_t *b = c->cfg.bus;
+        const uint32_t t0 = b->now_ms(b);
+        while (!b->busy(b) && (uint32_t)(b->now_ms(b) - t0) < ARM_RISE_MAX_MS) {
+            b->delay_ms(b, 1);
         }
         err = c->cfg.bus->arm_busy_irq(c->cfg.bus, done, ctx);
     }

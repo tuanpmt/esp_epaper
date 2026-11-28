@@ -240,6 +240,10 @@ epd_lvgl_set_rotation(disp, 180);  // Change at runtime, then re-layout the UI
 
 Raw buffers passed to `epd_update()` are always in native panel orientation.
 
+### Custom `epd_bus_t` implementations
+
+`now_ms` is a **required** hook of `epd_bus_t` (monotonic milliseconds). The SSD1677 controller takes every BUSY wait limit from it, never from counting `delay_ms` calls: `delay_ms(1)` may sleep a whole RTOS tick (10 ms at 100 Hz). A bus that leaves `now_ms` NULL crashes on the first BUSY wait.
+
 ## Update Modes
 
 | Mode | Description | Use Case |
