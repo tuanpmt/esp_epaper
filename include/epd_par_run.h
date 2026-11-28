@@ -1,0 +1,77 @@
+#pragma once
+
+// One refresh of a parallel panel: rails on, then for every waveform phase
+// start the scan of phase k on its slot, check PWR_GOOD and compute phase k+1
+// into the other buffer while the bus is busy, wait for the scan, keep the phase rate (never
+// faster than phase_us), and rails off at the end or on any error. Pure
+// control flow over injected operations, host-tested; the caller supplies
+// the PMIC (epd_tps65185), the scan bus (epd_par_bus) and the compute step
+// (epd_wf_pair_lut + epd_wf_phase).
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+    void *ctx;
+    esp_err_t (*hv_on)(void *ctx);
+    esp_err_t (*hv_off)(void *ctx);
+    bool (*pg_ok)(void *ctx);
+    // Fills one 2 bpp phase buffer; returns false instead when the phase drives
+    // exactly like the previous one (buf untouched: the previous buffer is scanned again)
+    bool (*compute)(void *ctx, int phase, uint8_t *buf);
+    esp_err_t (*scan_start)(void *ctx, const uint8_t *buf);
+    esp_err_t (*scan_wait)(void *ctx);
+    uint64_t (*now_us)(void *ctx);
+    void (*wait_until_us)(void *ctx, uint64_t t_us);
+} epd_par_run_ops_t;
+
+typedef enum {
+    EPD_RUN_OK,
+    EPD_RUN_HV_FAIL,     // rails did not come up: the panel was not driven
+    EPD_RUN_PG_DROP,     // PWR_GOOD lost between phases
+    EPD_RUN_SCAN_FAIL,   // bus error or timeout
+    EPD_RUN_BUDGET,      // high-voltage time budget exceeded
+} epd_run_result_t;
+
+typedef struct {
+    uint16_t phases_done;       // phases fully scanned
+    bool unknown;               // aborted after driving: the panel image is unknown
+    uint32_t hv_us;             // rails on to rails off
+    uint32_t hv_on_us;          // time spent in hv_on (wake, registers, PWR_GOOD)
+    uint32_t compute_max_us;    // slowest phase computation
+    uint32_t late_phases;       // phases that started > phase_us / 4 after their slot
+    uint16_t reused;            // phases that rescanned the previous buffer
+    uint32_t lag_us_max;        // latest phase start after its slot on the timeline
+    uint32_t frame_us_max;      // scan_start call to scan_wait return
+    uint32_t pg_us_max;         // PWR_GOOD check (runs during the scan)
+} epd_par_run_stats_t;
+
+// Phase k starts no earlier than origin + ceil(k * 1e6 / phase_hz), origin =
+// the start of phase 0: one fixed timeline, a late phase does not move the
+// later targets (as the vendor firmware, render_lcd.c:240-243).
+epd_run_result_t epd_par_run(const epd_par_run_ops_t *ops, uint16_t phases, uint32_t phase_hz,
+                             uint32_t budget_ms, uint8_t *const buf[2], epd_par_run_stats_t *st);
+
+// Rails across a burst of runs (plan 9 T6). The caller owns the hold: it
+// decides how long the rails may stay up without a scan, re-arms its
+// high-voltage watchdog, and calls hv_off when the hold ends.
+typedef struct {
+    bool rails_on;      // rails already up from the previous run: skip hv_on
+    bool keep_rails;    // leave the rails up after a successful run (never after an error)
+} epd_par_run_opts_t;
+
+// epd_par_run with options (NULL: rails on at the start, off at the end).
+// With rails_on the budget counts from the call. Any result but EPD_RUN_OK
+// turns the rails off, keep_rails or not.
+epd_run_result_t epd_par_run_ex(const epd_par_run_ops_t *ops, uint16_t phases, uint32_t phase_hz,
+                                uint32_t budget_ms, uint8_t *const buf[2], const epd_par_run_opts_t *opt,
+                                epd_par_run_stats_t *st);
+
+#ifdef __cplusplus
+}
+#endif

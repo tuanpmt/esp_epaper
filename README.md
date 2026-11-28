@@ -1,3 +1,5 @@
+> **v3.0.0**: new L8 LVGL 9.6 pipeline (`epd_quant`, `epd_dirty`, `epd_sched`, `epd_bus`, `epd_lvgl`) and an SSD1677 controller (`epd_ssd1677`). The RGB565 glue of v2 is removed; see CHANGELOG.md. Host tests: `test_host/run.sh`.
+
 # ESP E-Paper Component
 
 [![Component Registry](https://components.espressif.com/components/tuanpmt/esp_epaper/badge.svg)](https://components.espressif.com/components/tuanpmt/esp_epaper)
@@ -238,6 +240,10 @@ epd_lvgl_set_rotation(disp, 180);  // Change at runtime, then re-layout the UI
 
 Raw buffers passed to `epd_update()` are always in native panel orientation.
 
+### Custom `epd_bus_t` implementations
+
+`now_ms` is a **required** hook of `epd_bus_t` (monotonic milliseconds). The SSD1677 controller takes every BUSY wait limit from it, never from counting `delay_ms` calls: `delay_ms(1)` may sleep a whole RTOS tick (10 ms at 100 Hz). A bus that leaves `now_ms` NULL crashes on the first BUSY wait.
+
 ## Update Modes
 
 | Mode | Description | Use Case |
@@ -409,6 +415,7 @@ See the `examples/` folder for complete examples:
 
 | Example | Board | Description |
 |---------|-------|-------------|
+| [esp32s3_ssd1677_lvgl](examples/esp32s3_ssd1677_lvgl) | Metalio E-Ink 4 | v3 pipeline: SSD1677 800x480, LVGL 9.6 L8, dithered partial refresh |
 | [esp32s3_epaper_154](examples/esp32s3_epaper_154) | ESP32-S3-ePaper-1.54 | 1.54" BW, hinted Vietnamese fonts, optional 4-gray mode |
 | [esp32s3_photopainter](examples/esp32s3_photopainter) | ESP32-S3-PhotoPainter | 7.3" 6-Color with dithering |
 | [esp32_wroom_generic](examples/esp32_wroom_generic) | ESP32-WROOM-32D | Generic SSD16xx, responsive UI |
