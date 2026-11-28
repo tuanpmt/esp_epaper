@@ -87,7 +87,14 @@ static void rec_reset(epd_bus_t *b)
 
 static void rec_delay(epd_bus_t *b, uint32_t ms)
 {
-    rec_push((epd_bus_rec_t *)b, EPD_REC_DELAY)->ms = ms;
+    epd_bus_rec_t *r = (epd_bus_rec_t *)b;
+    rec_push(r, EPD_REC_DELAY)->ms = ms;
+    r->clock_ms += r->tick_ms > ms ? r->tick_ms : ms;   // a tick-rounded sleep when tick_ms is set
+}
+
+static uint32_t rec_now(epd_bus_t *b)
+{
+    return ((epd_bus_rec_t *)b)->clock_ms;
 }
 
 void epd_bus_rec_init(epd_bus_rec_t *r)
@@ -99,6 +106,7 @@ void epd_bus_rec_init(epd_bus_rec_t *r)
     r->bus.arm_busy_irq = rec_arm;
     r->bus.reset = rec_reset;
     r->bus.delay_ms = rec_delay;
+    r->bus.now_ms = rec_now;
 }
 
 void epd_bus_rec_clear(epd_bus_rec_t *r)

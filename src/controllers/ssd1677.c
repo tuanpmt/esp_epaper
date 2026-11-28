@@ -73,13 +73,19 @@ static esp_err_t cmd1(epd_ssd1677_t *c, uint8_t op, uint8_t v)
 // Polled wait, used only during init and LUT loading (short)
 static esp_err_t wait_idle(epd_ssd1677_t *c)
 {
-    for (uint32_t ms = 0; ms < BUSY_POLL_LIMIT_MS; ms++) {
-        if (!c->cfg.bus->busy(c->cfg.bus)) {
+    // Limit in real time: delay_ms(1) sleeps a whole tick, so a call count would
+    // stretch 3 s into 30 s at 100 Hz (#539)
+    epd_bus_t *b = c->cfg.bus;
+    const uint32_t t0 = b->now_ms(b);
+    for (;;) {
+        if (!b->busy(b)) {
             return ESP_OK;
         }
-        c->cfg.bus->delay_ms(c->cfg.bus, 1);
+        if ((uint32_t)(b->now_ms(b) - t0) >= BUSY_POLL_LIMIT_MS) {
+            return ESP_ERR_TIMEOUT;
+        }
+        b->delay_ms(b, 1);
     }
-    return ESP_ERR_TIMEOUT;
 }
 
 static const uint8_t *lut_table(const epd_ssd1677_t *c, lut_t which)

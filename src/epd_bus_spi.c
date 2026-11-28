@@ -20,6 +20,7 @@
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -220,6 +221,12 @@ static void bus_delay_ms(epd_bus_t *b, uint32_t ms)
     }
 }
 
+static uint32_t bus_now_ms(epd_bus_t *b)
+{
+    (void)b;
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
 // Disarms a pending BUSY callback: the panel state it waited for is gone.
 static void bus_reset(epd_bus_t *b)
 {
@@ -305,6 +312,7 @@ esp_err_t epd_bus_spi_new(const epd_bus_spi_cfg_t *cfg, epd_bus_t **out)
     s->base.arm_busy_irq = bus_arm_busy_irq;
     s->base.reset = bus_reset;
     s->base.delay_ms = bus_delay_ms;
+    s->base.now_ms = bus_now_ms;
     *out = &s->base;
     ESP_LOGI(TAG, "SPI%d %lu Hz, bounce 2x%u", cfg->host + 1, (unsigned long)cfg->hz, (unsigned)s->half);
     return ESP_OK;
